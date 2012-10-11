@@ -1,0 +1,1357 @@
+Index: gcc/doc/invoke.texi
+===================================================================
+--- gcc/doc/invoke.texi	(revision 192214)
++++ gcc/doc/invoke.texi	(working copy)
+@@ -414,6 +414,7 @@
+ -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
+ -ftree-loop-if-convert-stores -ftree-loop-im @gol
+ -ftree-phiprop -ftree-loop-distribution -ftree-loop-distribute-patterns @gol
++-ftree-loop-fusion @gol
+ -ftree-loop-ivcanon -ftree-loop-linear -ftree-loop-optimize @gol
+ -ftree-parallelize-loops=@var{n} -ftree-pre -ftree-partial-pre -ftree-pta @gol
+ -ftree-reassoc -ftree-sink -ftree-slsr -ftree-sra @gol
+@@ -7534,6 +7535,9 @@
+ @end smallexample
+ potentially producing data races.
+ 
++@item -ftree-loop-fusion
++Perform loop fusion.
++
+ @item -ftree-loop-distribution
+ Perform loop distribution.  This flag can improve cache performance on
+ big loop bodies and allow further loop optimizations, like
+Index: gcc/tree-pass.h
+===================================================================
+--- gcc/tree-pass.h	(revision 192214)
++++ gcc/tree-pass.h	(working copy)
+@@ -281,6 +281,7 @@
+ extern struct gimple_opt_pass pass_graphite;
+ extern struct gimple_opt_pass pass_graphite_transforms;
+ extern struct gimple_opt_pass pass_if_conversion;
++extern struct gimple_opt_pass pass_loop_fusion; 
+ extern struct gimple_opt_pass pass_loop_distribution;
+ extern struct gimple_opt_pass pass_vectorize;
+ extern struct gimple_opt_pass pass_slp_vectorize;
+Index: gcc/tree-loop-fusion.c
+===================================================================
+--- gcc/tree-loop-fusion.c	(revision 0)
++++ gcc/tree-loop-fusion.c	(revision 0)
+@@ -0,0 +1,1212 @@
++/* Loop fusion. */
++
++/* This pass performs loop fusion: for example, the loops
++
++   |loop_1
++   |  A[i] = ...
++   |endloop_1
++
++
++   |loop_2
++   |  ... = A[i]
++   |endloop_2
++
++   that becomes after fusion:
++
++   |loop_1
++   |  A[i] = ...
++   |  ... = A[i]
++   |endloop_1
++
++*/
++
++#include <iostream>
++
++#include "config.h"
++#include "system.h"
++#include "coretypes.h"
++#include "tm.h"
++#include "ggc.h"
++#include "tree.h"
++#include "target.h"
++
++#include "rtl.h"
++#include "basic-block.h"
++#include "diagnostic.h"
++#include "tree-flow.h"
++#include "tree-dump.h"
++#include "timevar.h"
++#include "cfgloop.h"
++#include "expr.h"
++#include "optabs.h"
++#include "tree-chrec.h"
++#include "tree-data-ref.h"
++#include "tree-scalar-evolution.h"
++#include "tree-pass.h"
++#include "langhooks.h"
++#include "tree-vectorizer.h"
++
++extern void gimple_merge_blocks (basic_block, basic_block);
++extern void remove_bb (basic_block);
++extern void print_loop (FILE *file, struct loop* loop, int indent, int verbosity);
++
++//TODO Copied from tree-parloops.c, should be put in a common header
++
++/* A transformation matrix, which is a self-contained ROWSIZE x COLSIZE
++   matrix.  Rather than use floats, we simply keep a single DENOMINATOR that
++   represents the denominator for every element in the matrix.  */
++typedef struct lambda_trans_matrix_s
++{
++  lambda_matrix matrix;
++  int rowsize;
++  int colsize;
++  int denominator;
++} *lambda_trans_matrix;
++#define LTM_MATRIX(T) ((T)->matrix)
++#define LTM_ROWSIZE(T) ((T)->rowsize)
++#define LTM_COLSIZE(T) ((T)->colsize)
++#define LTM_DENOMINATOR(T) ((T)->denominator)
++
++/* Allocate a new transformation matrix.  */
++
++static lambda_trans_matrix
++lambda_trans_matrix_new (int colsize, int rowsize,
++			 struct obstack * lambda_obstack)
++{
++  lambda_trans_matrix ret;
++
++  ret = (lambda_trans_matrix)
++    obstack_alloc (lambda_obstack, sizeof (struct lambda_trans_matrix_s));
++  LTM_MATRIX (ret) = lambda_matrix_new (rowsize, colsize, lambda_obstack);
++  LTM_ROWSIZE (ret) = rowsize;
++  LTM_COLSIZE (ret) = colsize;
++  LTM_DENOMINATOR (ret) = 1;
++  return ret;
++}
++
++/* Multiply a vector VEC by a matrix MAT.
++   MAT is an M*N matrix, and VEC is a vector with length N.  The result
++   is stored in DEST which must be a vector of length M.  */
++
++static void
++lambda_matrix_vector_mult (lambda_matrix matrix, int m, int n,
++			   lambda_vector vec, lambda_vector dest)
++{
++  int i, j;
++
++  lambda_vector_clear (dest, m);
++  for (i = 0; i < m; i++)
++    for (j = 0; j < n; j++)
++      dest[i] += matrix[i][j] * vec[j];
++}
++
++/* Return true if TRANS is a legal transformation matrix that respects
++   the dependence vectors in DISTS and DIRS.  The conservative answer
++   is false.
++
++   "Wolfe proves that a unimodular transformation represented by the
++   matrix T is legal when applied to a loop nest with a set of
++   lexicographically non-negative distance vectors RDG if and only if
++   for each vector d in RDG, (T.d >= 0) is lexicographically positive.
++   i.e.: if and only if it transforms the lexicographically positive
++   distance vectors to lexicographically positive vectors.  Note that
++   a unimodular matrix must transform the zero vector (and only it) to
++   the zero vector." S.Muchnick.  */
++
++static bool
++lambda_transform_legal_p (lambda_trans_matrix trans,
++			  int nb_loops,
++			  VEC (ddr_p, heap) *dependence_relations)
++{
++  unsigned int i, j;
++  lambda_vector distres;
++  struct data_dependence_relation *ddr;
++
++  gcc_assert (LTM_COLSIZE (trans) == nb_loops
++	      && LTM_ROWSIZE (trans) == nb_loops);
++
++  /* When there are no dependences, the transformation is correct.  */
++  if (VEC_length (ddr_p, dependence_relations) == 0)
++    return true;
++
++  ddr = VEC_index (ddr_p, dependence_relations, 0);
++  if (ddr == NULL)
++    return true;
++
++  /* When there is an unknown relation in the dependence_relations, we
++     know that it is no worth looking at this loop nest: give up.  */
++  if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
++    return false;
++
++  distres = lambda_vector_new (nb_loops);
++
++  /* For each distance vector in the dependence graph.  */
++  FOR_EACH_VEC_ELT (ddr_p, dependence_relations, i, ddr)
++    {
++      /* Don't care about relations for which we know that there is no
++	 dependence, nor about read-read (aka. output-dependences):
++	 these data accesses can happen in any order.  */
++      if (DDR_ARE_DEPENDENT (ddr) == chrec_known
++	  || (DR_IS_READ (DDR_A (ddr)) && DR_IS_READ (DDR_B (ddr))))
++	continue;
++
++      /* Conservatively answer: "this transformation is not valid".  */
++      if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
++	return false;
++
++      /* If the dependence could not be captured by a distance vector,
++	 conservatively answer that the transform is not valid.  */
++      if (DDR_NUM_DIST_VECTS (ddr) == 0)
++	return false;
++
++      /* Compute trans.dist_vect */
++      for (j = 0; j < DDR_NUM_DIST_VECTS (ddr); j++)
++	{
++	  lambda_matrix_vector_mult (LTM_MATRIX (trans), nb_loops, nb_loops,
++				     DDR_DIST_VECT (ddr, j), distres);
++
++	  if (!lambda_vector_lexico_pos (distres, nb_loops))
++	    return false;
++	}
++    }
++  return true;
++}
++
++/* Data dependency analysis. Returns true if the iterations of LOOP
++   are independent on each other (that is, if we can execute them
++   in parallel).  */
++
++static bool
++loop_parallel_p (struct loop *loop, struct obstack * parloop_obstack)
++{
++  VEC (loop_p, heap) *loop_nest;
++  VEC (ddr_p, heap) *dependence_relations;
++  VEC (data_reference_p, heap) *datarefs;
++  lambda_trans_matrix trans;
++  bool ret = false;
++
++  if (dump_file && (dump_flags & TDF_DETAILS))
++  {
++    fprintf (dump_file, "Considering loop %d\n", loop->num);
++    if (!loop->inner)
++      fprintf (dump_file, "loop is innermost\n");
++    else
++      fprintf (dump_file, "loop NOT innermost\n");
++   }
++
++  /* Check for problems with dependences.  If the loop can be reversed,
++     the iterations are independent.  */
++  datarefs = VEC_alloc (data_reference_p, heap, 10);
++  dependence_relations = VEC_alloc (ddr_p, heap, 10 * 10);
++  loop_nest = VEC_alloc (loop_p, heap, 3);
++  if (! compute_data_dependences_for_loop (loop, true, &loop_nest, &datarefs,
++					   &dependence_relations))
++    {
++      if (dump_file && (dump_flags & TDF_DETAILS))
++	fprintf (dump_file, "  FAILED: cannot analyze data dependencies\n");
++      ret = false;
++      goto end;
++    }
++  if (dump_file && (dump_flags & TDF_DETAILS))
++    dump_data_dependence_relations (dump_file, dependence_relations);
++
++  trans = lambda_trans_matrix_new (1, 1, parloop_obstack);
++  LTM_MATRIX (trans)[0][0] = -1;
++
++  if (lambda_transform_legal_p (trans, 1, dependence_relations))
++    {
++      ret = true;
++      if (dump_file && (dump_flags & TDF_DETAILS))
++	fprintf (dump_file, "  SUCCESS: may be parallelized\n");
++    }
++  else if (dump_file && (dump_flags & TDF_DETAILS))
++    fprintf (dump_file,
++	     "  FAILED: data dependencies exist across iterations\n");
++
++ end:
++  VEC_free (loop_p, heap, loop_nest);
++  free_dependence_relations (dependence_relations);
++  free_data_refs (datarefs);
++
++  return ret;
++}
++
++/* Returns true when a given loop is a sequential loop.  */
++
++static bool
++is_sequential_loop (struct loop *loop, struct obstack * parloop_obstack)
++{
++  if (loop_parallel_p (loop, parloop_obstack))
++    return false;
++  else
++    return true;
++}
++
++/* Returns true if there is no fusion preventing constraint between two given loops.  */
++
++static bool
++no_fusion_preventing_constraint (struct loop * /*loop_a*/, struct loop * /*loop_b*/)
++{
++  bool ret = true;
++  /*struct loop *father_loop;
++  father_loop = find_common_loop (loop_a, loop_b);
++  struct graph *rdg_father;
++  rdg_father = build_rdg (father_loop);
++  struct graph *rdg_a;
++  rdg_a = build_rdg (loop_a);
++  struct graph *rdg_b;
++  rdg_b = build_rdg (loop_b);*/
++  return ret;
++}
++
++/* Returns true when two loops can be fused.  */
++
++static bool
++can_fuse_loops (struct loop *loop_a, struct loop *loop_b, struct obstack * parloop_obstack)
++{
++  if ((loop_parallel_p (loop_a, parloop_obstack) && loop_parallel_p (loop_b, parloop_obstack) && no_fusion_preventing_constraint (loop_a, loop_b)) || 
++      (is_sequential_loop (loop_a, parloop_obstack) && is_sequential_loop (loop_b, parloop_obstack) && no_fusion_preventing_constraint (loop_a, loop_b)))
++    {
++      if (dump_file && (dump_flags & TDF_DETAILS))
++        fprintf (dump_file, " can fuse loops %d %d ", loop_a->num, loop_b->num);
++      return true;
++    }
++
++  return false;
++}
++
++void remove_edge_bb (basic_block from, basic_block to){
++    edge e;
++    edge_iterator ei;
++
++    int i = 0;
++
++    FOR_EACH_EDGE (e, ei, from->succs){
++        if(e->dest == to){
++            remove_edge(e);
++            ++i;
++            break;
++        }
++    }
++    
++    gcc_assert(i == 1);
++}
++
++inline void 
++full_debug(const char* state){
++#ifdef ENABLE_FULL_DUMPING
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, state);
++        dump_function_to_file(current_function_decl, dump_file, dump_flags);
++    }
++#endif
++}
++
++/* 
++ * This function fuses two loops together 
++ *
++ * The two functions have to be mergeable and mergeable together before this function is called. 
++ */
++
++void
++fuse_loops5 (struct loop* loop_a, struct loop* loop_b){
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Fusion using (5) \n");
++        full_debug("Before fusion\n");
++    }
++    
++    gimple_stmt_iterator gsi_b, gsi_b_last, gsi;
++    gsi_b = gsi_start_bb (loop_b->header);
++    gsi_b_last = gsi_last_bb (loop_b->header);
++    gsi_prev (&gsi_b_last);
++
++    tree use, def;
++
++    gimple phi = gsi_stmt(gsi_start_phis(loop_b->header));
++    use = PHI_RESULT (phi);
++        
++    phi = gsi_stmt(gsi_start_phis(loop_a->header));
++    def = PHI_RESULT (phi);
++    
++    replace_uses_by (def, use);
++    
++    remove_phi_nodes (loop_a->header);
++
++    for (gsi = gsi_start_bb (loop_a->header); !gsi_end_p (gsi);)
++    {
++        gimple stmt = gsi_stmt(gsi);
++
++        if (is_gimple_assign(stmt) && gimple_assign_rhs_code(stmt) != COND_EXPR && gimple_assign_rhs_code(stmt) != LABEL_EXPR)
++        {
++            update_stmt (stmt);
++            gsi_move_before (&gsi, &gsi_b_last);
++            update_stmt (stmt);
++        }
++        else
++        {
++            gsi_next (&gsi);
++        }
++    }
++    
++    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
++    
++    full_debug("After move\n");
++    
++    //Save them before cancel the loop
++    basic_block bb6 = loop_a->header;
++    basic_block bb7 = loop_a->latch;
++    
++    //Move bb6 and bb7 in the outer loop
++    remove_bb_from_loops(bb6);
++    add_bb_to_loop(bb6, loop_outer(loop_b));
++    
++    remove_bb_from_loops(bb7);
++    add_bb_to_loop(bb7, loop_outer(loop_b));
++    
++    delete_loop(loop_a);
++        
++    full_debug("After removing the loop\n");
++
++    delete_basic_block(bb7);
++    
++    //Fix the type of the edge
++    EDGE_SUCC(bb6, 0)->flags |= EDGE_FALLTHRU;
++    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_TRUE_VALUE;
++    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_FALSE_VALUE;
++    
++    //Remove the condition from bb6
++    for (gsi = gsi_start_bb (bb6); !gsi_end_p (gsi);)
++    {
++        gimple stmt = gsi_stmt(gsi);
++
++        if (gimple_code(stmt) == GIMPLE_COND)
++        {
++            gsi_remove(&gsi, true);
++        }
++        else
++        {
++            gsi_next (&gsi);
++        }
++    }
++    
++    full_debug("After removing bbs\n");
++
++    update_ssa(TODO_update_ssa);
++    
++    //Make sure dominators are updated
++    basic_block start = loop_b->header;
++    for(int i = 2; i < 8; ++i){
++        set_immediate_dominator (CDI_DOMINATORS, start, recompute_dominator (CDI_DOMINATORS, start));
++        start = start->next_bb;
++    }
++
++#ifdef ENABLE_CHECKING
++    verify_loop_structure();
++    verify_gimple_in_cfg(cfun);
++    verify_ssa(true);
++#endif
++}
++
++void
++fuse_loops4 (struct loop *loop_a, struct loop *loop_b)
++{
++    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
++    
++    basic_block bb3 = loop_b->header;
++    basic_block bb4 = loop_b->latch;
++    basic_block bb6 = loop_a->header;
++    basic_block bb7 = loop_a->latch;
++    basic_block bb8 = bb7->next_bb;
++
++    basic_block bb2 = bb3->prev_bb;
++    basic_block bb5 = bb6->prev_bb;
++    
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Fusion using (4) \n");
++    }
++    
++    full_debug("Before fusion\n");
++
++    redirect_edge_and_branch(EDGE_SUCC(bb4, 0), bb5);
++
++    full_debug("After fixing edge bb4->bb5\n");
++    
++    remove_branch(EDGE_PRED(bb5, 0));
++
++    full_debug("After removing branch bb3->bb5\n");
++
++    gimple_merge_blocks(bb3, bb4);
++    gimple_merge_blocks(bb3, bb5);
++
++    remove_bb(bb4);
++    remove_bb(bb5);
++
++    redirect_edge_and_branch(EDGE_SUCC(bb3,0), bb6);
++    redirect_edge_and_branch(EDGE_SUCC(bb7, 0), bb3);
++
++    //Delete bb4
++    //Delete bb5
++    
++    full_debug("After merging bb4->bb3 and bb5->bb3\n");
++    
++    //Unmergeable...gimple_merge_blocks(bb3, bb6);
++    //full_debug("After merging bb6->bb3\n");
++    
++    /*gimple_stmt_iterator bsi;
++    tree use, def;
++    
++    for (bsi = gsi_start_phis (loop_b->header); !gsi_end_p (bsi); gsi_next (&bsi)){
++        gimple phi = gsi_stmt (bsi);
++        use = PHI_RESULT (phi);
++    }
++
++    for (bsi = gsi_start_phis (loop_a->header); !gsi_end_p (bsi); gsi_next (&bsi)){
++        gimple phi = gsi_stmt (bsi);
++        def = PHI_RESULT (phi);
++    } 
++
++    for (bsi = gsi_start_phis (loop_a->header); !gsi_end_p (bsi); gsi_next (&bsi)){
++        gimple phi = gsi_stmt (bsi);
++        replace_uses_by (def, use);
++    }*/
++
++    verify_gimple_in_cfg(cfun);
++
++    remove_bb_from_loops(bb5);
++    add_bb_to_loop(bb5, loop_b);
++
++    remove_bb_from_loops(bb6);
++    add_bb_to_loop(bb6, loop_b);
++    
++    remove_bb_from_loops(bb7);
++    add_bb_to_loop(bb7, loop_b);
++
++    loop_b->latch = bb7;
++
++    delete_loop(loop_a);
++    loop_a = NULL;
++
++    full_debug("After fixing the loops\n");
++    verify_gimple_in_cfg(cfun);
++    
++    //Make sure dominators are updated
++    set_immediate_dominator (CDI_DOMINATORS, bb2, recompute_dominator (CDI_DOMINATORS, bb2));
++    set_immediate_dominator (CDI_DOMINATORS, bb3, recompute_dominator (CDI_DOMINATORS, bb3));
++    set_immediate_dominator (CDI_DOMINATORS, bb4, recompute_dominator (CDI_DOMINATORS, bb4));
++    set_immediate_dominator (CDI_DOMINATORS, bb5, recompute_dominator (CDI_DOMINATORS, bb5));
++    set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
++    set_immediate_dominator (CDI_DOMINATORS, bb7, recompute_dominator (CDI_DOMINATORS, bb7));
++    set_immediate_dominator (CDI_DOMINATORS, bb8, recompute_dominator (CDI_DOMINATORS, bb8));
++
++    full_debug("After fixing the dominators\n");
++    verify_gimple_in_cfg(cfun);
++
++    update_ssa(TODO_update_ssa_full_phi);
++
++    verify_loop_structure();
++    verify_gimple_in_cfg(cfun);
++}
++
++void
++fuse_loops3 (struct loop *loop_a, struct loop *loop_b)
++{
++    basic_block bb3 = loop_b->header;
++    basic_block bb4 = loop_b->latch;
++    basic_block bb6 = loop_a->header;
++    basic_block bb7 = loop_a->latch;
++    basic_block bb8 = bb7->next_bb;
++
++    basic_block bb2 = bb3->prev_bb;
++    basic_block bb5 = bb6->prev_bb;
++    
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Fusion using (3) \n");
++    }
++
++    full_debug("Before fusion\n");
++    
++    //Delete bb4
++    remove_bb(bb4);
++    remove_edge_bb(bb3, bb4);
++    remove_bb_from_loops(bb4);
++
++    full_debug("After delete bb4\n");
++    
++    //Swap bb3 and bb5 in the instruction stream
++    bb2->next_bb = bb5;
++    bb5->prev_bb = bb2;
++
++    bb5->next_bb = bb3;
++    bb3->prev_bb = bb5;
++
++    bb3->next_bb = bb6;
++    bb6->prev_bb = bb3;
++
++    //Remove all edges
++    remove_edge(EDGE_SUCC(bb3, 0));
++    remove_edge(EDGE_PRED(bb3, 0));
++    
++    remove_edge(EDGE_PRED(bb6, 0));
++    remove_edge(EDGE_PRED(bb6, 0));
++    remove_edge(EDGE_SUCC(bb6, 0));
++    remove_edge(EDGE_SUCC(bb6, 0));
++
++    //Create the correct edges
++    make_edge(bb2, bb5, EDGE_FALLTHRU);
++    make_edge(bb5, bb3, EDGE_FALLTHRU);
++    make_edge(bb3, bb6, EDGE_FALLTHRU);
++    make_edge(bb7, bb3, 0);
++    make_edge(bb6, bb8, 0);
++    make_edge(bb6, bb7, EDGE_FALLTHRU);
++
++    //Add bb3 too loob a
++    remove_bb_from_loops(bb3);
++    add_bb_to_loop(bb3, loop_a);
++    loop_a->header = bb3;
++    
++    //Remove conditional from bb3
++    gimple_stmt_iterator bsi;
++    for (bsi = gsi_start_bb (bb3); !gsi_end_p (bsi);)
++    {
++        gimple stmt = gsi_stmt(bsi);
++
++        // Do not transfer conditional expressions or labels
++        if (gimple_code(stmt) == GIMPLE_COND)
++        {
++            gsi_remove(&bsi, true);
++        } else {
++            gsi_next (&bsi);
++        }
++    }
++    
++    fprintf (dump_file, "BB2 before merging\n");
++    print_loops_bb (dump_file, bb2, 4, 10);
++    
++    fprintf (dump_file, "BB5 before merging\n");
++    print_loops_bb (dump_file, bb5, 4, 10);
++    
++    fprintf (dump_file, "Loop a before merging (num=%d) \n", loop_a->num);
++    print_loop (dump_file, loop_a, 0, 10);
++    
++    fprintf (dump_file, "BB8 before merging\n");
++    print_loops_bb (dump_file, bb8, 4, 10);
++
++    gimple_merge_blocks(bb3, bb6);
++    
++    //Loop b is not a loop anymore
++    //cancel_loop_tree(loop_b);
++    delete_loop(loop_b);
++        
++    fprintf (dump_file, "Loop a after merging (num=%d) \n", loop_a->num);
++    print_loop (dump_file, loop_a, 0, 10);
++    
++    verify_loop_structure();
++
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Fusion done \n");
++        flow_loops_dump(dump_file, NULL, 10);
++        fprintf (dump_file, "Loop a after fusion (num=%d) \n", loop_a->num);
++        print_loop (dump_file, loop_a, 0, 10);
++        fprintf (dump_file, "Loop b after fusion (num=%d) \n", loop_b->num);
++        print_loop (dump_file, loop_b, 0, 10);
++    }
++}
++
++/* The following function fuses two loops.  */
++
++static void
++fuse_loops (struct loop *loop_a, struct loop *loop_b)
++{
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Fusion using (1) \n");
++        fprintf (dump_file, "Loop a before fusion (num=%d) \n", loop_a->num);
++        print_loop (dump_file, loop_a, 0, 10);
++        fprintf (dump_file, "Loop b before fusion (num=%d) \n", loop_b->num);
++        print_loop (dump_file, loop_b, 0, 10);
++    }
++
++    gimple_stmt_iterator bsi_a, bsi_a_last, bsi_b, bsi_b_last, bsi;
++    bsi_b_last = gsi_last_bb (loop_b->header);
++    gsi_prev (&bsi_b_last);
++
++    tree use, def;
++
++    gimple_seq phi;
++    gimple_seq next;
++    gimple_seq prev;
++    
++    /*// Detects the iterator variable of loop_b.
++    for (phi = phi_nodes (loop_b->header); phi;) 
++    {
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Count b\n");
++        }
++        next = phi->gsbase.next;
++        use = PHI_RESULT (phi);
++        phi = next;
++    } 
++    
++    // Detects the iterator variable of loop_a.
++    for (phi = phi_nodes (loop_a->header); phi;) 
++    {
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Count a\n");
++        }
++        next = phi->gsbase.next;
++        def = PHI_RESULT (phi);
++        phi = next;
++    } 
++    
++    // Replaces the iterator variable of loop_a with that of loop_b.
++    for (phi = phi_nodes (loop_a->header); phi;) 
++    {
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Count a again\n");
++        }
++        next = phi->gsbase.next;
++        replace_uses_by (def, use);
++        phi = next;
++    }*/
++
++    /*gimple_seq copy = gimple_seq_copy(phi_nodes(loop_a->header));
++    
++    bsi = gsi_start_phis (loop_b->header);
++    gsi_insert_seq_before(&bsi, copy, GSI_NEW_STMT);*/
++
++    //remove_phi_nodes(loop_a->header);
++    
++    // Transfer phi nodes
++    /*for (bsi = gsi_start_phis (loop_a->header); !gsi_end_p (bsi); gsi_next (&bsi))
++    {
++        gimple phi = gsi_stmt (bsi);
++    
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Transfer phi into loop b \n");
++        }
++
++        //Remove from loop_a (gsi_remove points to the next element)
++        //gsi_remove (&bsi, false);
++
++        //Add it to loop_b
++        add_phi_node_to_bb(phi, loop_b->header);
++        
++        //update_stmt(phi);
++    }*/
++    
++    /*for (bsi = gsi_start_phis (loop_a->header); !gsi_end_p (bsi); gsi_next (&bsi))
++    {
++        remove_phi_node (&bsi, true);
++    }*/
++
++    /*
++
++    // Creates the necessary nodes in loop_b
++    for (phi = phi_nodes (loop_a->header); phi;)
++    {
++        next = phi->gsbase.next;
++        create_phi_node (SSA_NAME_VAR (PHI_RESULT (phi)), loop_b->header);
++        phi = next;
++    }
++
++    // Remove PHI nodes of loop_a.
++    for (bsi = gsi_start_phis (loop_a->header); !gsi_end_p (bsi); gsi_next (&bsi))
++    {
++        gimple phi = gsi_stmt (bsi);
++        remove_phi_node (&bsi, true);
++    }*/
++
++    // Transfer all the statements one by one.
++    /*for (bsi = gsi_start_bb (loop_a->header); !gsi_end_p (bsi);)
++    {
++        gimple stmt = gsi_stmt(bsi);
++
++        // Do not transfer conditional expressions or labels
++        if (is_gimple_assign(stmt) && (gimple_assign_rhs_code(stmt) != COND_EXPR && gimple_assign_rhs_code(stmt) != LABEL_EXPR))
++        {
++            update_stmt (stmt); 
++            gsi_move_before (&bsi, &bsi_b_last);
++            update_stmt (stmt); 
++        } else {
++            gsi_next (&bsi);
++        }
++    }*/
++    
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, "Loop a after fusion (num=%d) \n", loop_a->num);
++        print_loop (dump_file, loop_a, 0, 10);
++        fprintf (dump_file, "Loop b after fusion (num=%d) \n", loop_b->num);
++        print_loop (dump_file, loop_b, 0, 10);
++
++        fprintf (dump_file, "deleting loop %d \n", loop_a->num);
++    }
++
++    update_ssa (TODO_update_ssa);
++    cancel_loop_tree (loop_a);
++}
++
++/* Returns true if  loop_a is dependent on loop_b.  */
++
++static bool
++is_dependent_on (struct loop *loop_a, struct loop *loop_b)
++{
++  bool ret = false;
++  struct loop *loop_father;
++  loop_father = find_common_loop (loop_a, loop_b);
++
++  VEC (ddr_p, heap) * dependence_relations_a;
++  VEC (ddr_p, heap) * dependence_relations_b;
++  VEC (ddr_p, heap) * dependence_relations_father;
++  
++  VEC (loop_p, heap) *loop_nest_a;
++  VEC (loop_p, heap) *loop_nest_b;
++  VEC (loop_p, heap) *loop_nest_father;
++
++  VEC (data_reference_p, heap) * datarefs_a;
++  VEC (data_reference_p, heap) * datarefs_b;
++  VEC (data_reference_p, heap) * datarefs_father;
++  
++  datarefs_a = VEC_alloc (data_reference_p, heap, 10);
++  datarefs_b = VEC_alloc (data_reference_p, heap, 10);
++  datarefs_father = VEC_alloc (data_reference_p, heap, 10);
++
++  dependence_relations_a = VEC_alloc (ddr_p, heap, 10 * 10);
++  dependence_relations_b = VEC_alloc (ddr_p, heap, 10 * 10);
++  dependence_relations_father = VEC_alloc (ddr_p, heap, 10 * 10);
++  
++  loop_nest_a = VEC_alloc (loop_p, heap, 3);
++  loop_nest_b = VEC_alloc (loop_p, heap, 3);
++  loop_nest_father = VEC_alloc (loop_p, heap, 3);
++
++  compute_data_dependences_for_loop (loop_a, true, &loop_nest_a, &datarefs_a, &dependence_relations_a); 
++  compute_data_dependences_for_loop (loop_b, true, &loop_nest_b, &datarefs_b, &dependence_relations_b);
++  compute_data_dependences_for_loop (loop_father, true, &loop_nest_father, &datarefs_father, &dependence_relations_father);
++  
++  debug_data_dependence_relations (dependence_relations_a);
++  debug_data_dependence_relations (dependence_relations_b);
++  debug_data_dependence_relations (dependence_relations_father);
++  
++  if (dump_file && (dump_flags & TDF_DETAILS)){
++      fprintf (dump_file, "dumping data dependences of a \n");
++      dump_data_dependence_relations (dump_file, dependence_relations_a);
++      fprintf (dump_file, "dumping data dependences of b \n");
++      dump_data_dependence_relations (dump_file, dependence_relations_b);
++      fprintf (dump_file, "dumping data dependences of father \n");
++      dump_data_dependence_relations (dump_file, dependence_relations_father); 
++  }
++
++  free_dependence_relations (dependence_relations_a);
++  free_data_refs (datarefs_a);
++  free_dependence_relations (dependence_relations_b);
++  free_data_refs (datarefs_b);
++  free_dependence_relations (dependence_relations_father);
++  free_data_refs (datarefs_father);
++  
++  VEC_free (loop_p, heap, loop_nest_a);
++  VEC_free (loop_p, heap, loop_nest_b);
++  VEC_free (loop_p, heap, loop_nest_father);
++
++  return true;
++}
++
++/* Structure to hold the list of partitions.  */
++
++struct partition 
++{
++  int num;
++  int list[10];
++  int present;
++  char type; 
++} ;
++
++
++/* Create a graph original_graph. It's nodes are loops and it's edges are data dependencies.  */
++
++static struct graph *
++create_original_graph (int num_loops, struct obstack * parloop_obstack)
++{
++    struct graph *g = new_graph (num_loops);
++    struct loop *loop;
++    loop_iterator li;
++    FOR_EACH_LOOP (li, loop, 0)
++    {
++        struct partition *p = XNEW (struct partition);
++        p->num = 0;
++        p->list[p->num] = loop->num;
++        p->num++;
++        p->present = 1;
++
++        if (loop_parallel_p (loop, parloop_obstack))
++        {
++            p->type = 'P';
++            g->vertices[loop->num].data = p;
++        }
++        else
++        {
++            p->type = 'S';
++            g->vertices[loop->num].data = p;
++        } 
++    }
++
++    FOR_EACH_LOOP (li, loop, 0)
++    {
++        struct loop *loop_dummy;
++        loop_iterator li_dummy;
++        FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
++        {
++            if (loop != loop_dummy)
++            {
++                if (is_dependent_on (loop, loop_dummy))
++                {
++                    if (no_fusion_preventing_constraint (loop, loop_dummy))
++                    {
++                        struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
++                        ge->data = const_cast<char*>("FPE");
++                    } else {
++                        add_edge (g, loop_dummy->num, loop->num);
++                    }
++                }
++            }
++        }  
++    }
++
++    return g;  
++}
++
++/* Create a component graph from the original graph. The parameter t denotes type of the component graph -
++   parallel or sequential.  */
++
++static struct graph*
++create_component_graph (char t, int num_loops)
++{
++  struct obstack parloop_obstack;
++  gcc_obstack_init (&parloop_obstack);
++
++  struct graph *og = create_original_graph (num_loops, &parloop_obstack);
++  struct graph *g = new_graph (num_loops);
++  struct partition *p, *q, *r;
++  int i;
++  char opp; 
++  if (t == 'P')
++    opp = 'S';
++  else
++    opp = 'P';
++  struct loop *loop;
++  loop_iterator li;
++
++  for (i = 1; i < num_loops; i++)
++  {
++      p = XNEW (struct partition);
++      p = static_cast<partition*>(og->vertices[i].data);
++      if (p->type == t)
++      {
++          q = XNEW (struct partition);
++          q->num = 0;
++          q->list[q->num] = i;
++          q->num++;
++          q->present = 1;
++          q->type = t;
++          g->vertices[i].data = q;
++      } 
++  } 
++
++  if (t == 'P'){
++      FOR_EACH_LOOP (li, loop, 0)
++      {
++          struct loop *loop_dummy;
++          loop_iterator li_dummy;
++          FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
++          {
++              if (loop != loop_dummy)
++              {
++                  if (is_dependent_on (loop, loop_dummy)&& (loop_parallel_p (loop, &parloop_obstack)) && (loop_parallel_p (loop_dummy, &parloop_obstack)))
++                  {
++                      if (no_fusion_preventing_constraint (loop, loop_dummy))
++                      {
++                          struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
++                          ge->data = const_cast<char*>("FPE");
++                      } 
++                      else 
++                          add_edge (g, loop_dummy->num, loop->num);
++                  }
++              }
++          }  
++      }
++  }
++
++  if (t =='S'){
++      FOR_EACH_LOOP (li, loop, 0)
++      {
++          struct loop *loop_dummy;
++          loop_iterator li_dummy;
++          FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
++          {
++              if (loop != loop_dummy)
++              {
++                  if (is_dependent_on (loop, loop_dummy)&& (is_sequential_loop (loop, &parloop_obstack)) && (is_sequential_loop (loop_dummy, &parloop_obstack)))
++                  {
++                      if (no_fusion_preventing_constraint (loop, loop_dummy))
++                      {
++                          struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
++                          ge->data = const_cast<char*>("FPE");
++                      } 
++                      else 
++                          add_edge (g, loop_dummy->num, loop->num);
++                  }
++              }
++          }  
++      }
++  }
++  
++  for (i = 1; i < num_loops; i++)
++  {
++      p = XNEW (struct partition);
++      p = static_cast<partition*>(og->vertices[i].data);
++      if (p->type == opp)
++      { 
++          struct graph_edge *ges;
++          for (ges = og->vertices[i].pred; ges; ges = ges->pred_next)
++          {
++              int source = ges->src;
++              struct graph_edge *ged; 
++              for (ged = og->vertices[i].succ; ged; ged = ged->succ_next)
++              { 
++                  int destin = ged->dest;
++                  q = XNEW (struct partition);
++                  q = static_cast<partition*>(og->vertices[source].data);
++                  r = XNEW (struct partition);
++                  r = static_cast<partition*>(og->vertices[destin].data);
++                  if ((q->type == t) && (r->type == t) && (q->list[0] != r->list[0]))
++                  {
++                      struct graph_edge *ge = add_edge (g, source, destin); 
++                      ge->data = const_cast<char*>("FPE");
++                  }
++              }
++          }
++      }
++  }
++
++  obstack_free (&parloop_obstack, NULL);
++
++  return g;
++}
++
++
++/* Partitions the graph according to rules. And fuse the loops corresponding to the partitions.  */
++
++    static void 
++do_partitions (struct graph *g)
++{
++    int num = g->n_vertices;
++    int i;
++    struct partition *p, *q; 
++    for (i = 1; i<num; i++)
++    {
++        p = XNEW (struct partition);
++        p = static_cast<partition*>(g->vertices[i].data);
++        struct graph_edge *ge;
++
++        if (p){
++            if (p->present == 1){
++                for (ge = g->vertices[i].pred; ge; ge = ge->pred_next)
++                {
++                    q = XNEW (struct partition);
++                    q = static_cast<partition*>(g->vertices[ge->src].data);
++                    
++                    if (ge->data != "FPE") 
++                    {
++                        p->list[p->num] = q->list[0];
++                        p->num++;
++                        q->present = 0;
++                    }
++                }
++            }
++        }
++    } 
++}
++
++/* Performs loop fusion according to the given graph.  */
++
++static void
++fuse_according_to_graph (struct graph *g)
++{
++  int num = g->n_vertices;
++  int i, j;
++  struct partition *p; 
++  struct loop *loop;
++  loop_iterator li;
++  for (i = 1; i<num; i++)
++    {
++      p = XNEW (struct partition);
++      p = static_cast<partition*>(g->vertices[i].data);
++      if (p)
++        if (p->present == 1)
++          {
++            for (j = (p->num)-1; j > 0 ; j--)
++              {
++                FOR_EACH_LOOP (li, loop, 0)
++                  {
++                    if ((loop->num == p->list[j]) && (loop->next->num == p->list[j-1]))
++                      fuse_loops (loop, loop->next);
++                  }
++              }
++          } 
++    } 
++}
++
++/* Verify if this loop is supported by the merging algorithm */
++
++bool 
++loop_is_mergeable(struct loop* loop){
++    //The algorithm will fail on loop with more than one exit
++    if (!single_exit(loop)){
++        return false; 
++    }
++     
++    //The algorithm only supports loops with a header and a latch
++    if (loop->num_nodes > 2){
++        return false;
++    }
++
++    return true;
++}
++
++bool
++loops_are_mergeable(struct loop *loop_a, struct loop *loop_b){
++    //TODO
++    return true;
++}
++
++bool
++loops_are_interesting_to_merge(struct loop *loop_a, struct loop *loop_b){
++    //TODO
++    return true;
++}
++
++
++/* Performs legal loops fusion in the current function.  */
++
++static unsigned int
++tree_loop_fusion (void)
++{
++    //If there are no loops, no need to go farther
++    if (!current_loops){
++        return 0;
++    }
++   
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        int num_loops = number_of_loops();
++        fprintf (dump_file, "Start loop fusion pass (%d loops)\n", num_loops);
++
++        flow_loops_dump(dump_file, NULL, 10);
++    }
++
++    struct loop *loop;
++    loop_iterator li;
++
++    //Consider only innermost loops, other cannot be merged with this strategy
++    FOR_EACH_LOOP (li, loop, LI_ONLY_INNERMOST)
++    {
++        //The algorithm cannot merge all loops
++        if(!loop_is_mergeable(loop)){
++            if (dump_file && (dump_flags & TDF_DETAILS)){
++                fprintf (dump_file, "Loop %d cannot be merged\n", loop->num);
++            }
++
++            continue;
++        }
++
++        //Loop->next points to a loop in the same loop tree
++        if (loop->next)
++        {
++            struct loop *next = loop->next;
++
++            gcc_assert(loop_outer(loop) == loop_outer(next));
++
++            //The algorithm cannot merge all loops
++            if(!loop_is_mergeable(next)){
++                if (dump_file && (dump_flags & TDF_DETAILS)){
++                    fprintf (dump_file, "Loop %d cannot be merged\n", next->num);
++                }
++
++                continue;
++            }
++                
++            if (dump_file && (dump_flags & TDF_DETAILS)){
++                fprintf (dump_file, "Consider Loops %d and %d as candidates\n", loop->num, next->num);
++            }
++
++            //Verify that the loops can be merged together
++            if(!loops_are_mergeable (loop, next)){
++                if (dump_file && (dump_flags & TDF_DETAILS)){
++                    fprintf (dump_file, "Loops %d and %d cannot be merged\n", loop->num, next->num);
++                }
++
++                continue;
++            }
++                
++            //Finally, if they are interesting to merge, merge them
++            if(loops_are_interesting_to_merge (loop, next)){
++                fuse_loops5 (loop, next);
++            }
++
++            //if (can_fuse_loops (loop, loop->next))
++            {
++                /*if (is_dependent_on (loop, loop->next))
++                  fprintf (stderr, "loop %d is dependent on loop %d \n\n", loop->num, loop->next->num);
++                  else
++                  fprintf (stderr, "loop %d is not dependent on loop %d \n\n", loop->num, loop->next->num);*/ 
++                
++                //fuse_loops5 (loop, next);
++            }
++        }
++    }
++
++    /* struct graph *original_graph_1 = new_graph (num_loops);
++       original_graph_1 = create_original_graph (num_loops);
++       dump_graph (dump_file, original_graph_1);
++       dump_graph (stderr, original_graph_1);
++       fprintf (dump_file, "printed the original_graph\n\n"); 
++       fprintf (stderr, "printed the original_graph\n\n");
++       struct graph *component_graph_parallel = create_component_graph ('P', num_loops);
++       dump_graph (dump_file, component_graph_parallel);
++       dump_graph (stderr, component_graph_parallel);
++       fprintf (dump_file, "printed the component parallel graph\n\n"); 
++       fprintf (stderr, "printed the component parallel graph\n\n");
++       dump_graph (dump_file, original_graph_1);
++       dump_graph (stderr, original_graph_1);
++       fprintf (dump_file, "printed the original_graph\n\n"); 
++       fprintf (stderr, "printed the original_graph\n\n");
++       do_partitions (component_graph_parallel);
++       dump_graph (dump_file, component_graph_parallel);
++       dump_graph (stderr, component_graph_parallel);
++       fprintf (dump_file, "printed the partitioned component parallel graph\n"); 
++       fprintf (stderr, "printed the partitioned component parallel graph\n");
++       fuse_according_to_graph (component_graph_parallel);*/
++
++    return 0;
++}
++
++static bool
++gate_tree_loop_fusion (void)
++{
++    return flag_tree_loop_fusion != 0;
++}
++
++struct gimple_opt_pass pass_loop_fusion =
++{
++    {
++        GIMPLE_PASS, 
++        "lfusion",                      /* name */
++        gate_tree_loop_fusion,          /* gate */
++        tree_loop_fusion,               /* execute */
++        NULL,                           /* sub */
++        NULL,                           /* next */
++        0,                              /* static_pass_number */
++        TV_TREE_LOOP_FUSION,            /* tv_id */
++        PROP_cfg | PROP_ssa,            /* properties_required */
++        0,                              /* properties_provided */
++        0,                              /* properties_destroyed */
++        0,                              /* todo_flags_start */
++        TODO_update_ssa | TODO_verify_ssa,   /* todo_flags_finish */
++    }
++};
+Index: gcc/timevar.def
+===================================================================
+--- gcc/timevar.def	(revision 192214)
++++ gcc/timevar.def	(working copy)
+@@ -171,6 +171,7 @@
+ DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
+ DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
+ DEFTIMEVAR (TV_GRAPHITE_CODE_GEN     , "Graphite code generation")
++DEFTIMEVAR (TV_TREE_LOOP_FUSION, "tree loop fusion")
+ DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
+ DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
+ DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
+Index: gcc/common.opt
+===================================================================
+--- gcc/common.opt	(revision 192214)
++++ gcc/common.opt	(working copy)
+@@ -2050,6 +2050,10 @@
+ Common Report Var(flag_optimize_strlen) Optimization
+ Enable string length optimizations on trees
+ 
++ftree-loop-fusion
++Common Report Var(flag_tree_loop_fusion) Optimization
++Enable loop fusion on trees
++
+ ftree-loop-distribution
+ Common Report Var(flag_tree_loop_distribution) Optimization
+ Enable loop distribution on trees
+Index: gcc/Makefile.in
+===================================================================
+--- gcc/Makefile.in	(revision 192214)
++++ gcc/Makefile.in	(working copy)
+@@ -1356,6 +1356,7 @@
+ 	tree-inline.o \
+ 	tree-into-ssa.o \
+ 	tree-iterator.o \
++    tree-loop-fusion.o \
+ 	tree-loop-distribution.o \
+ 	tree-nested.o \
+ 	tree-nomudflap.o \
+@@ -2578,6 +2579,11 @@
+    dumpfile.h $(TM_H) $(GGC_H) $(TREE_H) $(TREE_FLOW_H) \
+    $(CFGLOOP_H) $(TREE_PASS_H) $(TREE_VECTORIZER_H) \
+    $(TREE_PRETTY_PRINT_H)
++tree-loop-fusion.o: tree-loop-fusion.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
++   $(TM_H) $(GGC_H) $(OPTABS_H) $(TREE_H) $(RTL_H) $(BASIC_BLOCK_H) \
++   $(DIAGNOSTIC_H) $(TREE_FLOW_H) $(TREE_DUMP_H) $(TIMEVAR_H) $(CFGLOOP_H) \
++   tree-pass.h $(TREE_DATA_REF_H) $(SCEV_H) $(EXPR_H) \
++   $(TARGET_H) tree-chrec.h tree-vectorizer.h
+ tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
+    coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
+ tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
+Index: gcc/tree-cfg.c
+===================================================================
+--- gcc/tree-cfg.c	(revision 192214)
++++ gcc/tree-cfg.c	(working copy)
+@@ -116,9 +116,9 @@
+ static bool verify_gimple_transaction (gimple);
+ 
+ /* Flowgraph optimization and cleanup.  */
+-static void gimple_merge_blocks (basic_block, basic_block);
++extern void gimple_merge_blocks (basic_block, basic_block);
+ static bool gimple_can_merge_blocks_p (basic_block, basic_block);
+-static void remove_bb (basic_block);
++extern void remove_bb (basic_block);
+ static edge find_taken_edge_computed_goto (basic_block, tree);
+ static edge find_taken_edge_cond_expr (basic_block, tree);
+ static edge find_taken_edge_switch_expr (basic_block, tree);
+@@ -1625,7 +1625,7 @@
+ 
+ /* Merge block B into block A.  */
+ 
+-static void
++void
+ gimple_merge_blocks (basic_block a, basic_block b)
+ {
+   gimple_stmt_iterator last, gsi, psi;
+@@ -1815,7 +1815,7 @@
+ 
+ /* Remove statements of basic block BB.  */
+ 
+-static void
++void
+ remove_bb (basic_block bb)
+ {
+   gimple_stmt_iterator i;
+@@ -6961,7 +6961,7 @@
+    VERBOSITY level this outputs the contents of the loop, or just its
+    structure.  */
+ 
+-static void
++void
+ print_loop (FILE *file, struct loop *loop, int indent, int verbosity)
+ {
+   char *s_indent;
+Index: gcc/passes.c
+===================================================================
+--- gcc/passes.c	(revision 192214)
++++ gcc/passes.c	(working copy)
+@@ -1450,6 +1450,7 @@
+ 	  NEXT_PASS (pass_scev_cprop);
+ 	  NEXT_PASS (pass_record_bounds);
+ 	  NEXT_PASS (pass_check_data_deps);
++     NEXT_PASS (pass_loop_fusion);
+ 	  NEXT_PASS (pass_loop_distribution);
+ 	  NEXT_PASS (pass_copy_prop);
+ 	  NEXT_PASS (pass_graphite);
