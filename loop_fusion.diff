@@ -1314,7 +1314,7 @@ Index: timevar.def
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
  DEFTIMEVAR (TV_GRAPHITE_CODE_GEN     , "Graphite code generation")
-+DEFTIMEVAR (TV_TREE_LOOP_FUSION, "tree loop fusion")
++DEFTIMEVAR (TV_TREE_LOOP_FUSION      , "tree loop fusion")
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
