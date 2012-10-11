@@ -1,7 +1,7 @@
-Index: gcc/doc/invoke.texi
+Index: doc/invoke.texi
 ===================================================================
---- gcc/doc/invoke.texi	(revision 192214)
-+++ gcc/doc/invoke.texi	(working copy)
+--- doc/invoke.texi	(revision 192214)
++++ doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
  -ftree-loop-if-convert-stores -ftree-loop-im @gol
@@ -20,10 +20,10 @@ Index: gcc/doc/invoke.texi
  @item -ftree-loop-distribution
  Perform loop distribution.  This flag can improve cache performance on
  big loop bodies and allow further loop optimizations, like
-Index: gcc/tree-pass.h
+Index: tree-pass.h
 ===================================================================
---- gcc/tree-pass.h	(revision 192214)
-+++ gcc/tree-pass.h	(working copy)
+--- tree-pass.h	(revision 192214)
++++ tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
  extern struct gimple_opt_pass pass_graphite_transforms;
@@ -32,11 +32,11 @@ Index: gcc/tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
-Index: gcc/tree-loop-fusion.c
+Index: tree-loop-fusion.c
 ===================================================================
---- gcc/tree-loop-fusion.c	(revision 0)
-+++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1212 @@
+--- tree-loop-fusion.c	(revision 0)
++++ tree-loop-fusion.c	(revision 0)
+@@ -0,0 +1,1269 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -333,12 +333,51 @@ Index: gcc/tree-loop-fusion.c
 +
 +inline void 
 +full_debug(const char* state){
-+#ifdef ENABLE_FULL_DUMPING
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
 +        fprintf (dump_file, state);
 +        dump_function_to_file(current_function_decl, dump_file, dump_flags);
 +    }
-+#endif
++}
++
++/* Return the induction variable SSA name for this loop */
++tree get_ssa_name_iv(struct loop* loop){
++    tree ssa_iv_name = NULL_TREE;
++
++    for(gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
++        gimple stmt = gsi_stmt (gsi);
++
++        if (gimple_code(stmt) == GIMPLE_COND){
++            tree lhs = gimple_cond_lhs(stmt);
++            tree rhs = gimple_cond_rhs(stmt);
++
++            if(TREE_CODE(lhs) == SSA_NAME){
++                ssa_iv_name = lhs;
++            } else if(TREE_CODE(rhs) == SSA_NAME){
++                ssa_iv_name = rhs;
++            } 
++        }
++    }
++
++    gcc_assert(ssa_iv_name != NULL_TREE);
++
++    return ssa_iv_name;
++}
++
++tree get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name){
++    tree def = NULL_TREE;
++    
++    for(gimple_stmt_iterator gsi = gsi_start_phis (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
++        gimple phi = gsi_stmt (gsi);
++        
++        if(SSA_NAME_VAR(gimple_phi_result(phi)) == SSA_NAME_VAR(ssa_iv_name)){
++            def = gimple_phi_result(phi);
++            break;
++        }
++    }
++    
++    gcc_assert(def != NULL_TREE);
++
++    return def;
 +}
 +
 +/* 
@@ -359,17 +398,23 @@ Index: gcc/tree-loop-fusion.c
 +    gsi_b_last = gsi_last_bb (loop_b->header);
 +    gsi_prev (&gsi_b_last);
 +
-+    tree use, def;
++    /* 1. Replace the induction variable */
 +
-+    gimple phi = gsi_stmt(gsi_start_phis(loop_b->header));
-+    use = PHI_RESULT (phi);
-+        
-+    phi = gsi_stmt(gsi_start_phis(loop_a->header));
-+    def = PHI_RESULT (phi);
++    tree ssa_iv_name_b = get_ssa_name_iv(loop_b);
++    tree ssa_iv_name_a = get_ssa_name_iv(loop_a);
++    
++    tree use = get_phi_var_for_iv(loop_b, ssa_iv_name_b);
++    tree def = get_phi_var_for_iv(loop_a, ssa_iv_name_a);
 +    
 +    replace_uses_by (def, use);
 +    
++    full_debug("After IV replacing\n");
++
++    /* 2. Transfer other PHI nodes */
++    
 +    remove_phi_nodes (loop_a->header);
++
++    /* 3. Transfer all the statements */
 +
 +    for (gsi = gsi_start_bb (loop_a->header); !gsi_end_p (gsi);)
 +    {
@@ -387,9 +432,15 @@ Index: gcc/tree-loop-fusion.c
 +        }
 +    }
 +    
++    full_debug("After transfer of statements\n");
++   
++    /* 4. Rewrite into Loop Closed SSA */
++
 +    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
 +    
-+    full_debug("After move\n");
++    full_debug("After loop closed SSA\n");
++
++    /* 5. Delete the loop A */
 +    
 +    //Save them before cancel the loop
 +    basic_block bb6 = loop_a->header;
@@ -407,13 +458,15 @@ Index: gcc/tree-loop-fusion.c
 +    full_debug("After removing the loop\n");
 +
 +    delete_basic_block(bb7);
++
++    /* 6. Fix edges */
 +    
 +    //Fix the type of the edge
 +    EDGE_SUCC(bb6, 0)->flags |= EDGE_FALLTHRU;
 +    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_TRUE_VALUE;
 +    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_FALSE_VALUE;
 +    
-+    //Remove the condition from bb6
++    //Remove the condition from the old loop header
 +    for (gsi = gsi_start_bb (bb6); !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt(gsi);
@@ -428,9 +481,13 @@ Index: gcc/tree-loop-fusion.c
 +        }
 +    }
 +    
-+    full_debug("After removing bbs\n");
++    full_debug("After removing basic blocks\n");
++
++    /* 7. Update SSA */
 +
 +    update_ssa(TODO_update_ssa);
++
++    /* 8. Update dominators */
 +    
 +    //Make sure dominators are updated
 +    basic_block start = loop_b->header;
@@ -1249,10 +1306,10 @@ Index: gcc/tree-loop-fusion.c
 +        TODO_update_ssa | TODO_verify_ssa,   /* todo_flags_finish */
 +    }
 +};
-Index: gcc/timevar.def
+Index: timevar.def
 ===================================================================
---- gcc/timevar.def	(revision 192214)
-+++ gcc/timevar.def	(working copy)
+--- timevar.def	(revision 192214)
++++ timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
@@ -1261,10 +1318,10 @@ Index: gcc/timevar.def
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
-Index: gcc/common.opt
+Index: common.opt
 ===================================================================
---- gcc/common.opt	(revision 192214)
-+++ gcc/common.opt	(working copy)
+--- common.opt	(revision 192214)
++++ common.opt	(working copy)
 @@ -2050,6 +2050,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
  Enable string length optimizations on trees
@@ -1276,10 +1333,10 @@ Index: gcc/common.opt
  ftree-loop-distribution
  Common Report Var(flag_tree_loop_distribution) Optimization
  Enable loop distribution on trees
-Index: gcc/Makefile.in
+Index: Makefile.in
 ===================================================================
---- gcc/Makefile.in	(revision 192214)
-+++ gcc/Makefile.in	(working copy)
+--- Makefile.in	(revision 192214)
++++ Makefile.in	(working copy)
 @@ -1356,6 +1356,7 @@
  	tree-inline.o \
  	tree-into-ssa.o \
@@ -1300,10 +1357,10 @@ Index: gcc/Makefile.in
  tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
     coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
-Index: gcc/tree-cfg.c
+Index: tree-cfg.c
 ===================================================================
---- gcc/tree-cfg.c	(revision 192214)
-+++ gcc/tree-cfg.c	(working copy)
+--- tree-cfg.c	(revision 192214)
++++ tree-cfg.c	(working copy)
 @@ -116,9 +116,9 @@
  static bool verify_gimple_transaction (gimple);
  
@@ -1343,10 +1400,10 @@ Index: gcc/tree-cfg.c
  print_loop (FILE *file, struct loop *loop, int indent, int verbosity)
  {
    char *s_indent;
-Index: gcc/passes.c
+Index: passes.c
 ===================================================================
---- gcc/passes.c	(revision 192214)
-+++ gcc/passes.c	(working copy)
+--- passes.c	(revision 192214)
++++ passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
  	  NEXT_PASS (pass_record_bounds);
