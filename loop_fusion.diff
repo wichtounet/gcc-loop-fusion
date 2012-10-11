@@ -36,7 +36,7 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1269 @@
+@@ -0,0 +1,1265 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -84,10 +84,6 @@ Index: tree-loop-fusion.c
 +#include "tree-pass.h"
 +#include "langhooks.h"
 +#include "tree-vectorizer.h"
-+
-+extern void gimple_merge_blocks (basic_block, basic_block);
-+extern void remove_bb (basic_block);
-+extern void print_loop (FILE *file, struct loop* loop, int indent, int verbosity);
 +
 +//TODO Copied from tree-parloops.c, should be put in a common header
 +
@@ -531,11 +527,11 @@ Index: tree-loop-fusion.c
 +
 +    full_debug("After removing branch bb3->bb5\n");
 +
-+    gimple_merge_blocks(bb3, bb4);
-+    gimple_merge_blocks(bb3, bb5);
++    //gimple_merge_blocks(bb3, bb4);
++    //gimple_merge_blocks(bb3, bb5);
 +
-+    remove_bb(bb4);
-+    remove_bb(bb5);
++    //remove_bb(bb4);
++    //remove_bb(bb5);
 +
 +    redirect_edge_and_branch(EDGE_SUCC(bb3,0), bb6);
 +    redirect_edge_and_branch(EDGE_SUCC(bb7, 0), bb3);
@@ -622,7 +618,7 @@ Index: tree-loop-fusion.c
 +    full_debug("Before fusion\n");
 +    
 +    //Delete bb4
-+    remove_bb(bb4);
++    //remove_bb(bb4);
 +    remove_edge_bb(bb3, bb4);
 +    remove_bb_from_loops(bb4);
 +
@@ -687,7 +683,7 @@ Index: tree-loop-fusion.c
 +    fprintf (dump_file, "BB8 before merging\n");
 +    print_loops_bb (dump_file, bb8, 4, 10);
 +
-+    gimple_merge_blocks(bb3, bb6);
++    //gimple_merge_blocks(bb3, bb6);
 +    
 +    //Loop b is not a loop anymore
 +    //cancel_loop_tree(loop_b);
@@ -1357,49 +1353,6 @@ Index: Makefile.in
  tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
     coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
-Index: tree-cfg.c
-===================================================================
---- tree-cfg.c	(revision 192214)
-+++ tree-cfg.c	(working copy)
-@@ -116,9 +116,9 @@
- static bool verify_gimple_transaction (gimple);
- 
- /* Flowgraph optimization and cleanup.  */
--static void gimple_merge_blocks (basic_block, basic_block);
-+extern void gimple_merge_blocks (basic_block, basic_block);
- static bool gimple_can_merge_blocks_p (basic_block, basic_block);
--static void remove_bb (basic_block);
-+extern void remove_bb (basic_block);
- static edge find_taken_edge_computed_goto (basic_block, tree);
- static edge find_taken_edge_cond_expr (basic_block, tree);
- static edge find_taken_edge_switch_expr (basic_block, tree);
-@@ -1625,7 +1625,7 @@
- 
- /* Merge block B into block A.  */
- 
--static void
-+void
- gimple_merge_blocks (basic_block a, basic_block b)
- {
-   gimple_stmt_iterator last, gsi, psi;
-@@ -1815,7 +1815,7 @@
- 
- /* Remove statements of basic block BB.  */
- 
--static void
-+void
- remove_bb (basic_block bb)
- {
-   gimple_stmt_iterator i;
-@@ -6961,7 +6961,7 @@
-    VERBOSITY level this outputs the contents of the loop, or just its
-    structure.  */
- 
--static void
-+void
- print_loop (FILE *file, struct loop *loop, int indent, int verbosity)
- {
-   char *s_indent;
 Index: passes.c
 ===================================================================
 --- passes.c	(revision 192214)
