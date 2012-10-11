@@ -2,6 +2,12 @@
 
 static const unsigned long SIZE = 100000000;
 
+/*
+ * Simple examples of loops that can merged. 
+ *
+ * Can be used as a base file for benchmarking.
+ */
+
 int main(){
     unsigned long* array = new unsigned long[SIZE];
 
