@@ -3,8 +3,9 @@
 static const unsigned long SIZE = 100000000;
 
 /*
- * Currently, these loops are not supported for merging. 
- * Because of the added PHI node for the sum incrementation
+ * Merged correctly by the algorithm. 
+ * The additional PHI is copied from the second loop to the first one. 
+ * Can be used as benchmark. 
  */
 
 int main(){
@@ -12,14 +13,17 @@ int main(){
 
     unsigned long sum = 0; 
     
-    //This loop should be merged with the following
-    for(unsigned long i = 0; i < SIZE; ++i){
-        array[i] = i;
-    }
+    //This loop won't be merged    
+    for(unsigned long i = 0; i < 50; ++i){
+        //This loop should be merged with the following
+        for(unsigned long i = 0; i < SIZE; ++i){
+            array[i] = i;
+        }
 
-    //This loop should be merged with the previous 
-    for(unsigned long i = 0; i < SIZE; ++i){
-        sum += array[i];
+        //This loop should be merged with the previous 
+        for(unsigned long i = 0; i < SIZE; ++i){
+            sum += array[i];
+        }
     }
 
     std::cout << sum << std::endl;
