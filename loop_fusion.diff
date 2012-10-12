@@ -450,10 +450,10 @@ Index: tree-loop-fusion.c
 +    add_bb_to_loop(bb7, loop_outer(loop_b));
 +    
 +    delete_loop(loop_a);
-+        
-+    full_debug("After removing the loop\n");
 +
 +    delete_basic_block(bb7);
++        
++    full_debug("After removing the loop\n");
 +
 +    /* 6. Fix edges */
 +    
