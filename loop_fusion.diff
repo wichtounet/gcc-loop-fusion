@@ -1,7 +1,7 @@
-Index: doc/invoke.texi
+Index: gcc/doc/invoke.texi
 ===================================================================
---- doc/invoke.texi	(revision 192214)
-+++ doc/invoke.texi	(working copy)
+--- gcc/doc/invoke.texi	(revision 192214)
++++ gcc/doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
  -ftree-loop-if-convert-stores -ftree-loop-im @gol
@@ -20,10 +20,10 @@ Index: doc/invoke.texi
  @item -ftree-loop-distribution
  Perform loop distribution.  This flag can improve cache performance on
  big loop bodies and allow further loop optimizations, like
-Index: tree-pass.h
+Index: gcc/tree-pass.h
 ===================================================================
---- tree-pass.h	(revision 192214)
-+++ tree-pass.h	(working copy)
+--- gcc/tree-pass.h	(revision 192214)
++++ gcc/tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
  extern struct gimple_opt_pass pass_graphite_transforms;
@@ -32,11 +32,11 @@ Index: tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
-Index: tree-loop-fusion.c
+Index: gcc/tree-loop-fusion.c
 ===================================================================
---- tree-loop-fusion.c	(revision 0)
-+++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,928 @@
+--- gcc/tree-loop-fusion.c	(revision 0)
++++ gcc/tree-loop-fusion.c	(revision 0)
+@@ -0,0 +1,964 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -407,8 +407,44 @@ Index: tree-loop-fusion.c
 +    full_debug("After IV replacing\n");
 +
 +    /* 2. Transfer other PHI nodes */
++
++    edge old_entry_edge = loop_preheader_edge (loop_a);
++    edge old_latch_edge = loop_latch_edge (loop_a);
 +    
-+    remove_phi_nodes (loop_a->header);
++    edge new_entry_edge = loop_preheader_edge (loop_b);
++    edge new_latch_edge = loop_latch_edge (loop_b);
++    
++    for(gimple_stmt_iterator gsi = gsi_start_phis (loop_a->header); !gsi_end_p (gsi); ){
++        gimple phi_orig = gsi_stmt (gsi);
++        
++        if(SSA_NAME_VAR(gimple_phi_result(phi_orig)) != SSA_NAME_VAR(ssa_iv_name_a)){
++            fprintf (dump_file, "Found a PHI node to copy \n");
++
++            tree res = gimple_phi_result(phi_orig);
++            gimple phi_new = create_phi_node(res, loop_b->header);
++        
++            tree def;
++            source_location locus;
++
++            /* Copy the first PHI arg (coming from entry) */
++            def = PHI_ARG_DEF_FROM_EDGE (phi_orig, old_entry_edge);
++            locus = gimple_phi_arg_location_from_edge (phi_orig, old_entry_edge);
++            add_phi_arg (phi_new, def, new_entry_edge, locus);
++            
++            /* Copy the second PHI arg (coming from the latch) */
++            def = PHI_ARG_DEF_FROM_EDGE (phi_orig, old_latch_edge);
++            locus = gimple_phi_arg_location_from_edge (phi_orig, old_latch_edge);
++            add_phi_arg (phi_new, def, new_latch_edge, locus);
++
++            //We do not want the SSA name to be released
++            remove_phi_node (&gsi, false);
++        } else {
++            //The SSA name can be released
++            remove_phi_node (&gsi, true);
++        }
++    }
++    
++    full_debug("After transfer of PHI nodes\n");
 +
 +    /* 3. Transfer all the statements */
 +
@@ -965,10 +1001,10 @@ Index: tree-loop-fusion.c
 +        TODO_update_ssa | TODO_verify_ssa,   /* todo_flags_finish */
 +    }
 +};
-Index: timevar.def
+Index: gcc/timevar.def
 ===================================================================
---- timevar.def	(revision 192214)
-+++ timevar.def	(working copy)
+--- gcc/timevar.def	(revision 192214)
++++ gcc/timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
@@ -977,10 +1013,10 @@ Index: timevar.def
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
-Index: common.opt
+Index: gcc/common.opt
 ===================================================================
---- common.opt	(revision 192214)
-+++ common.opt	(working copy)
+--- gcc/common.opt	(revision 192214)
++++ gcc/common.opt	(working copy)
 @@ -2050,6 +2050,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
  Enable string length optimizations on trees
@@ -992,10 +1028,10 @@ Index: common.opt
  ftree-loop-distribution
  Common Report Var(flag_tree_loop_distribution) Optimization
  Enable loop distribution on trees
-Index: Makefile.in
+Index: gcc/Makefile.in
 ===================================================================
---- Makefile.in	(revision 192214)
-+++ Makefile.in	(working copy)
+--- gcc/Makefile.in	(revision 192214)
++++ gcc/Makefile.in	(working copy)
 @@ -1356,6 +1356,7 @@
  	tree-inline.o \
  	tree-into-ssa.o \
@@ -1016,10 +1052,10 @@ Index: Makefile.in
  tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
     coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
-Index: passes.c
+Index: gcc/passes.c
 ===================================================================
---- passes.c	(revision 192214)
-+++ passes.c	(working copy)
+--- gcc/passes.c	(revision 192214)
++++ gcc/passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
  	  NEXT_PASS (pass_record_bounds);
