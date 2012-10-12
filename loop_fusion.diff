@@ -1,7 +1,7 @@
-Index: gcc/doc/invoke.texi
+Index: doc/invoke.texi
 ===================================================================
---- gcc/doc/invoke.texi	(revision 192214)
-+++ gcc/doc/invoke.texi	(working copy)
+--- doc/invoke.texi	(revision 192214)
++++ doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
  -ftree-loop-if-convert-stores -ftree-loop-im @gol
@@ -20,10 +20,10 @@ Index: gcc/doc/invoke.texi
  @item -ftree-loop-distribution
  Perform loop distribution.  This flag can improve cache performance on
  big loop bodies and allow further loop optimizations, like
-Index: gcc/tree-pass.h
+Index: tree-pass.h
 ===================================================================
---- gcc/tree-pass.h	(revision 192214)
-+++ gcc/tree-pass.h	(working copy)
+--- tree-pass.h	(revision 192214)
++++ tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
  extern struct gimple_opt_pass pass_graphite_transforms;
@@ -32,11 +32,11 @@ Index: gcc/tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
-Index: gcc/tree-loop-fusion.c
+Index: tree-loop-fusion.c
 ===================================================================
---- gcc/tree-loop-fusion.c	(revision 0)
-+++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1054 @@
+--- tree-loop-fusion.c	(revision 0)
++++ tree-loop-fusion.c	(revision 0)
+@@ -0,0 +1,1079 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -529,16 +529,18 @@ Index: gcc/tree-loop-fusion.c
 +
 +    /* 5. Delete the loop A */
 +    
-+    //Save them before cancel the loop
++    //Save them before loop gets deleted
++    basic_block between_bb = basic_block_between (loop_a, loop_b);
 +    basic_block bb6 = loop_a->header;
 +    basic_block bb7 = loop_a->latch;
++    basic_block next_bb = get_last_bb (loop_a)->next_bb;
 +    
 +    //Move bb6 and bb7 in the outer loop
-+    remove_bb_from_loops(bb6);
-+    add_bb_to_loop(bb6, loop_outer(loop_b));
++    remove_bb_from_loops (bb6);
++    add_bb_to_loop (bb6, loop_outer (loop_b));
 +    
-+    remove_bb_from_loops(bb7);
-+    add_bb_to_loop(bb7, loop_outer(loop_b));
++    remove_bb_from_loops (bb7);
++    add_bb_to_loop (bb7, loop_outer (loop_b));
 +    
 +    delete_loop(loop_a);
 +
@@ -568,22 +570,44 @@ Index: gcc/tree-loop-fusion.c
 +        }
 +    }
 +    
-+    full_debug("After removing basic blocks\n");
++    full_debug("After fixing the edges \n");
 +
 +    /* 7. Clean the basic blocks */
 +
-+    /* 8. Update SSA */
++    //Remove the between block if possible
++    if(gimple_seq_empty_p (phi_nodes (between_bb)) && gimple_seq_empty_p (bb_seq (between_bb))){
++        redirect_edge_and_branch (EDGE_SUCC (loop_b->header, 1), bb6);
++
++        delete_basic_block (between_bb);
++    } else {
++        set_immediate_dominator (CDI_DOMINATORS, between_bb, recompute_dominator (CDI_DOMINATORS, between_bb));
++    }
++    
++    //Remove the old loop header if possible
++    if(gimple_seq_empty_p (phi_nodes (bb6)) && gimple_seq_empty_p (bb_seq (bb6))){
++        //If the between basic block has not been removed
++        if(EDGE_SUCC (loop_b->header, 1)->dest == between_bb){
++            redirect_edge_and_branch (EDGE_SUCC (between_bb, 0), next_bb);
++        } else {
++            redirect_edge_and_branch (EDGE_SUCC (loop_b->header, 1), next_bb);
++        }
++
++        delete_basic_block (bb6);
++    } else {
++        set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
++    }
++    
++    full_debug("After cleaning basic blocks\n");
++
++    /* 7. Update SSA */
 +
 +    update_ssa(TODO_update_ssa);
 +
-+    /* 9. Update dominators */
++    /* 8. Update dominators */
 +    
-+    //Make sure dominators are updated
-+    basic_block start = loop_b->header;
-+    for(int i = 2; i < 8; ++i){
-+        set_immediate_dominator (CDI_DOMINATORS, start, recompute_dominator (CDI_DOMINATORS, start));
-+        start = start->next_bb;
-+    }
++    set_immediate_dominator (CDI_DOMINATORS, loop_b->header, recompute_dominator (CDI_DOMINATORS, loop_b->header));
++    set_immediate_dominator (CDI_DOMINATORS, loop_b->latch, recompute_dominator (CDI_DOMINATORS, loop_b->latch));
++    set_immediate_dominator (CDI_DOMINATORS, next_bb, recompute_dominator (CDI_DOMINATORS, next_bb));
 +
 +#ifdef ENABLE_CHECKING
 +    verify_loop_structure();
@@ -954,12 +978,13 @@ Index: gcc/tree-loop-fusion.c
 +    return true;
 +}
 +
-+bool
++/* Return true if the two loops are interesting to merge, otherwise return false.  */
++
++static bool
 +loops_are_interesting_to_merge(struct loop *loop_a, struct loop *loop_b){
 +    //TODO
 +    return true;
 +}
-+
 +
 +/* Performs legal loops fusion in the current function.  */
 +
@@ -1091,10 +1116,10 @@ Index: gcc/tree-loop-fusion.c
 +        TODO_update_ssa | TODO_verify_ssa,   /* todo_flags_finish */
 +    }
 +};
-Index: gcc/timevar.def
+Index: timevar.def
 ===================================================================
---- gcc/timevar.def	(revision 192214)
-+++ gcc/timevar.def	(working copy)
+--- timevar.def	(revision 192214)
++++ timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
@@ -1103,10 +1128,10 @@ Index: gcc/timevar.def
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
-Index: gcc/common.opt
+Index: common.opt
 ===================================================================
---- gcc/common.opt	(revision 192214)
-+++ gcc/common.opt	(working copy)
+--- common.opt	(revision 192214)
++++ common.opt	(working copy)
 @@ -2050,6 +2050,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
  Enable string length optimizations on trees
@@ -1118,10 +1143,10 @@ Index: gcc/common.opt
  ftree-loop-distribution
  Common Report Var(flag_tree_loop_distribution) Optimization
  Enable loop distribution on trees
-Index: gcc/Makefile.in
+Index: Makefile.in
 ===================================================================
---- gcc/Makefile.in	(revision 192214)
-+++ gcc/Makefile.in	(working copy)
+--- Makefile.in	(revision 192214)
++++ Makefile.in	(working copy)
 @@ -1356,6 +1356,7 @@
  	tree-inline.o \
  	tree-into-ssa.o \
@@ -1142,10 +1167,10 @@ Index: gcc/Makefile.in
  tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
     coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
-Index: gcc/passes.c
+Index: passes.c
 ===================================================================
---- gcc/passes.c	(revision 192214)
-+++ gcc/passes.c	(working copy)
+--- passes.c	(revision 192214)
++++ passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
  	  NEXT_PASS (pass_record_bounds);
