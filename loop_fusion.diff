@@ -36,7 +36,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1036 @@
+@@ -0,0 +1,1054 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -310,24 +310,12 @@ Index: gcc/tree-loop-fusion.c
 +  return false;
 +}
 +
-+void remove_edge_bb (basic_block from, basic_block to){
-+    edge e;
-+    edge_iterator ei;
++/* 
++ * Print the current function to to the dump file 
++ * if logging is enabled. 
++ */
 +
-+    int i = 0;
-+
-+    FOR_EACH_EDGE (e, ei, from->succs){
-+        if(e->dest == to){
-+            remove_edge(e);
-+            ++i;
-+            break;
-+        }
-+    }
-+    
-+    gcc_assert(i == 1);
-+}
-+
-+inline void 
++static inline void 
 +full_debug(const char* state){
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
 +        fprintf (dump_file, state);
@@ -335,8 +323,77 @@ Index: gcc/tree-loop-fusion.c
 +    }
 +}
 +
++/* Return the last BB (last in the instruction stream) */
++
++static basic_block 
++get_last_bb(struct loop *loop){
++    basic_block header = loop->header;
++    basic_block latch = loop->latch;
++
++    if(header->next_bb == latch)
++    {
++       return latch; 
++    } 
++    else 
++    {
++        return header;
++    }
++}
++
++/* Return the first BB (first in the instruction stream) */
++
++static basic_block 
++get_first_bb(struct loop *loop){
++    basic_block header = loop->header;
++    basic_block latch = loop->latch;
++
++    if(header->next_bb == latch)
++    {
++       return header; 
++    } 
++    else 
++    {
++        return latch;
++    }
++}
++
++/* Return the number of basic blocks between the two loops */
++
++static unsigned int
++distance_between_loops (struct loop *loop_a, struct loop *loop_b){
++    //Some loops appears to have their latch first, so taking latch and header
++    //is not enough to determine the distance
++    basic_block current = get_last_bb (loop_b);
++    basic_block header_a = get_first_bb (loop_a);
++
++    unsigned int distance = 0;
++
++    while(current->next_bb != header_a){
++        ++distance;
++        current = current->next_bb;
++    }
++
++    return distance;
++}
++
++/* 
++ * Return the basic block between the two loops. 
++ * Assumes that the distance between the loops is 1. 
++ */
++
++static basic_block
++basic_block_between (struct loop *loop_a, struct loop *loop_b){
++    //Some loops appears to have their latch first, so taking latch and header
++    //is not enough to determine the distance
++    basic_block last_bb = get_last_bb (loop_b);
++
++    return last_bb->next_bb;
++}
++
 +/* Return the induction variable SSA name for this loop */
-+tree get_ssa_name_iv(struct loop* loop){
++
++static tree 
++get_ssa_name_iv(struct loop* loop){
 +    tree ssa_iv_name = NULL_TREE;
 +
 +    for(gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
@@ -359,7 +416,10 @@ Index: gcc/tree-loop-fusion.c
 +    return ssa_iv_name;
 +}
 +
-+tree get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name){
++/* Return the PHI LHS for the given SSA name in the given loop */
++
++static tree 
++get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name){
 +    tree def = NULL_TREE;
 +    
 +    for(gimple_stmt_iterator gsi = gsi_start_phis (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
@@ -382,7 +442,7 @@ Index: gcc/tree-loop-fusion.c
 + * The two functions have to be mergeable and mergeable together before this function is called. 
 + */
 +
-+void
++static void
 +fuse_loops (struct loop* loop_a, struct loop* loop_b){
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
 +        fprintf (dump_file, "Fusion of A=%d and B=%d\n", loop_a->num, loop_b->num);
@@ -466,12 +526,6 @@ Index: gcc/tree-loop-fusion.c
 +    }
 +    
 +    full_debug("After transfer of statements\n");
-+   
-+    /* 4. Rewrite into Loop Closed SSA */
-+
-+    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
-+    
-+    full_debug("After loop closed SSA\n");
 +
 +    /* 5. Delete the loop A */
 +    
@@ -516,11 +570,13 @@ Index: gcc/tree-loop-fusion.c
 +    
 +    full_debug("After removing basic blocks\n");
 +
-+    /* 7. Update SSA */
++    /* 7. Clean the basic blocks */
++
++    /* 8. Update SSA */
 +
 +    update_ssa(TODO_update_ssa);
 +
-+    /* 8. Update dominators */
++    /* 9. Update dominators */
 +    
 +    //Make sure dominators are updated
 +    basic_block start = loop_b->header;
@@ -847,7 +903,7 @@ Index: gcc/tree-loop-fusion.c
 +
 +/* Verify if this loop is supported by the merging algorithm */
 +
-+bool 
++static bool 
 +loop_is_mergeable(struct loop* loop){
 +    //The algorithm will fail on loop with more than one exit
 +    if (!single_exit(loop)){
@@ -862,55 +918,10 @@ Index: gcc/tree-loop-fusion.c
 +    return true;
 +}
 +
-+/* Return the last BB (last in the instruction stream) */
-+
-+basic_block 
-+get_last_bb(struct loop *loop){
-+    basic_block header = loop->header;
-+    basic_block latch = loop->latch;
-+
-+    if(header->next_bb == latch)
-+    {
-+       return latch; 
-+    } 
-+    else 
-+    {
-+        return header;
-+    }
-+}
-+
-+/* Return the first BB (first in the instruction stream) */
-+
-+basic_block 
-+get_first_bb(struct loop *loop){
-+    basic_block header = loop->header;
-+    basic_block latch = loop->latch;
-+
-+    if(header->next_bb == latch)
-+    {
-+       return header; 
-+    } 
-+    else 
-+    {
-+        return latch;
-+    }
-+}
-+
-+bool
++static bool
 +loops_are_mergeable(struct loop *loop_a, struct loop *loop_b){
-+    unsigned int distance = 0;
-+
-+    //Some loops appears to have their latch first, so taking latch and header
-+    //is not enough to determine the distance
-+    basic_block current = get_last_bb (loop_b);
-+    basic_block header_a = get_first_bb (loop_a);
-+
-+    while(current->next_bb != header_a){
-+        ++distance;
-+        current = current->next_bb;
-+    }
-+
 +    //Only support loops with only one basic block between them
++    unsigned int distance = distance_between_loops (loop_a, loop_b);
 +    if(distance != 1){
 +        if (dump_file && (dump_flags & TDF_DETAILS)){
 +            fprintf (dump_file, "The distance is too high (distance=%d)\n", distance);
@@ -919,17 +930,21 @@ Index: gcc/tree-loop-fusion.c
 +        return false;
 +    }
 +
-+    unsigned between_stmt = 0;
-+    gimple_stmt_iterator gsi;
-+    for (gsi = gsi_start_bb (current); !gsi_end_p (gsi); gsi_next(&gsi))
-+    {
-+        ++between_stmt;
++    basic_block between_bb = basic_block_between (loop_a, loop_b);
++
++    //Only empty block between A and B are supported
++    if(!gimple_seq_empty_p( bb_seq( between_bb))){
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Too many statements in the between block\n");
++        }
++
++        return false;
 +    }
 +
-+    //Only empty block between A and B are supported (PHI nodes are supported)
-+    if(between_stmt > 0){
++    //Only empty block between A and B are supported
++    if(!gimple_seq_empty_p( phi_nodes( between_bb))){
 +        if (dump_file && (dump_flags & TDF_DETAILS)){
-+            fprintf (dump_file, "Too many statements in the between block (statements=%d)\n", between_stmt);
++            fprintf (dump_file, "Too many PHI nodes in the between block\n");
 +        }
 +
 +        return false;
@@ -1023,6 +1038,9 @@ Index: gcc/tree-loop-fusion.c
 +            }
 +        }
 +    }
++
++    //Make sure the function is transformed in LCSSA
++    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
 +
 +    /* struct graph *original_graph_1 = new_graph (num_loops);
 +       original_graph_1 = create_original_graph (num_loops);
