@@ -36,7 +36,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,964 @@
+@@ -0,0 +1,1036 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -385,8 +385,9 @@ Index: gcc/tree-loop-fusion.c
 +void
 +fuse_loops (struct loop* loop_a, struct loop* loop_b){
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
-+        fprintf (dump_file, "Fusion of %d and %d\n", loop_a->num, loop_b->num);
++        fprintf (dump_file, "Fusion of A=%d and B=%d\n", loop_a->num, loop_b->num);
 +        full_debug("Before fusion\n");
++        flow_loops_dump(dump_file, NULL, 10);
 +    }
 +    
 +    gimple_stmt_iterator gsi_b, gsi_b_last, gsi;
@@ -861,8 +862,79 @@ Index: gcc/tree-loop-fusion.c
 +    return true;
 +}
 +
++/* Return the last BB (last in the instruction stream) */
++
++basic_block 
++get_last_bb(struct loop *loop){
++    basic_block header = loop->header;
++    basic_block latch = loop->latch;
++
++    if(header->next_bb == latch)
++    {
++       return latch; 
++    } 
++    else 
++    {
++        return header;
++    }
++}
++
++/* Return the first BB (first in the instruction stream) */
++
++basic_block 
++get_first_bb(struct loop *loop){
++    basic_block header = loop->header;
++    basic_block latch = loop->latch;
++
++    if(header->next_bb == latch)
++    {
++       return header; 
++    } 
++    else 
++    {
++        return latch;
++    }
++}
++
 +bool
 +loops_are_mergeable(struct loop *loop_a, struct loop *loop_b){
++    unsigned int distance = 0;
++
++    //Some loops appears to have their latch first, so taking latch and header
++    //is not enough to determine the distance
++    basic_block current = get_last_bb (loop_b);
++    basic_block header_a = get_first_bb (loop_a);
++
++    while(current->next_bb != header_a){
++        ++distance;
++        current = current->next_bb;
++    }
++
++    //Only support loops with only one basic block between them
++    if(distance != 1){
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "The distance is too high (distance=%d)\n", distance);
++        }
++
++        return false;
++    }
++
++    unsigned between_stmt = 0;
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_bb (current); !gsi_end_p (gsi); gsi_next(&gsi))
++    {
++        ++between_stmt;
++    }
++
++    //Only empty block between A and B are supported (PHI nodes are supported)
++    if(between_stmt > 0){
++        if (dump_file && (dump_flags & TDF_DETAILS)){
++            fprintf (dump_file, "Too many statements in the between block (statements=%d)\n", between_stmt);
++        }
++
++        return false;
++    }
++
 +    //TODO
 +    return true;
 +}
