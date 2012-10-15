@@ -16,20 +16,20 @@ int main(){
     //This loop won't be merged    
     for(unsigned long i = 0; i < 50; ++i){
         //This loop should be merged with the following
-        for(unsigned long i = 0; i < SIZE; ++i){
-            array[i] = i;
+        for(unsigned long j = 0; j < SIZE; ++j){
+            array[j] = j;
         }
 
         //This loop should be merged with the previous 
-        for(unsigned long i = 0; i < SIZE; ++i){
-            sum = array[i];
+        for(unsigned long j = 0; j < SIZE; ++j){
+            sum = array[j];
         }
     }
 
     //This loop won't be merged    
-    for(unsigned long i = 0; i < SIZE; ++i){
-        array[i] = i;
-    }
+    /*for(unsigned long j = 0; j < SIZE; ++j){
+        array[j] = j;
+    }*/
 
     std::cout << sum << std::endl;
 
