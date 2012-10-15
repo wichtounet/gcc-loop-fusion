@@ -36,7 +36,7 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1079 @@
+@@ -0,0 +1,1197 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -84,6 +84,13 @@ Index: tree-loop-fusion.c
 +#include "tree-pass.h"
 +#include "langhooks.h"
 +#include "tree-vectorizer.h"
++
++static struct
++{
++  /* The number of loops fused. */
++  int fused;
++
++} fusion_stats;
 +
 +//TODO Copied from tree-parloops.c, should be put in a common header
 +
@@ -390,6 +397,36 @@ Index: tree-loop-fusion.c
 +    return last_bb->next_bb;
 +}
 +
++/*
++ * Return the number of PHI nodes in the given Basic Block.
++ */
++
++static unsigned int
++gimple_phi_count (basic_block bb){
++    unsigned int count = 0;
++
++    for(gimple_stmt_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi); gsi_next (&gsi)){
++        ++count;
++    }
++
++    return count;
++}
++
++/*
++ * Return the number of GIMPLE statement in the given Basic Block.
++ */
++
++static unsigned int
++gimple_stmt_count (basic_block bb){
++    unsigned int count = 0;
++
++    for(gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi)){
++        ++count;
++    }
++
++    return count;
++}
++
 +/* Return the induction variable SSA name for this loop */
 +
 +static tree 
@@ -449,11 +486,6 @@ Index: tree-loop-fusion.c
 +        full_debug("Before fusion\n");
 +        flow_loops_dump(dump_file, NULL, 10);
 +    }
-+    
-+    gimple_stmt_iterator gsi_b, gsi_b_last, gsi;
-+    gsi_b = gsi_start_bb (loop_b->header);
-+    gsi_b_last = gsi_last_bb (loop_b->header);
-+    gsi_prev (&gsi_b_last);
 +
 +    /* 1. Replace the induction variable */
 +
@@ -508,8 +540,11 @@ Index: tree-loop-fusion.c
 +    full_debug("After transfer of PHI nodes\n");
 +
 +    /* 3. Transfer all the statements */
++    
++    gimple_stmt_iterator gsi_b_last = gsi_last_bb (loop_b->header);
++    gsi_prev (&gsi_b_last);
 +
-+    for (gsi = gsi_start_bb (loop_a->header); !gsi_end_p (gsi);)
++    for (gimple_stmt_iterator gsi = gsi_start_bb (loop_a->header); !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt(gsi);
 +
@@ -530,6 +565,7 @@ Index: tree-loop-fusion.c
 +    /* 5. Delete the loop A */
 +    
 +    //Save them before loop gets deleted
++    basic_block header_b = loop_b->header;
 +    basic_block between_bb = basic_block_between (loop_a, loop_b);
 +    basic_block bb6 = loop_a->header;
 +    basic_block bb7 = loop_a->latch;
@@ -543,20 +579,20 @@ Index: tree-loop-fusion.c
 +    add_bb_to_loop (bb7, loop_outer (loop_b));
 +    
 +    delete_loop(loop_a);
-+
++        
 +    delete_basic_block(bb7);
 +        
 +    full_debug("After removing the loop\n");
 +
 +    /* 6. Fix edges */
-+    
++
 +    //Fix the type of the edge
 +    EDGE_SUCC(bb6, 0)->flags |= EDGE_FALLTHRU;
 +    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_TRUE_VALUE;
 +    EDGE_SUCC(bb6, 0)->flags &= ~EDGE_FALSE_VALUE;
 +    
 +    //Remove the condition from the old loop header
-+    for (gsi = gsi_start_bb (bb6); !gsi_end_p (gsi);)
++    for (gimple_stmt_iterator gsi = gsi_start_bb (bb6); !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt(gsi);
 +
@@ -584,18 +620,64 @@ Index: tree-loop-fusion.c
 +    }
 +    
 +    //Remove the old loop header if possible
-+    if(gimple_seq_empty_p (phi_nodes (bb6)) && gimple_seq_empty_p (bb_seq (bb6))){
++    /*if(gimple_seq_empty_p (phi_nodes (bb6)) && gimple_seq_empty_p (bb_seq (bb6))){
++        edge new_pred;
++
 +        //If the between basic block has not been removed
 +        if(EDGE_SUCC (loop_b->header, 1)->dest == between_bb){
-+            redirect_edge_and_branch (EDGE_SUCC (between_bb, 0), next_bb);
++            new_pred = EDGE_SUCC (between_bb, 0);
 +        } else {
-+            redirect_edge_and_branch (EDGE_SUCC (loop_b->header, 1), next_bb);
++            new_pred = EDGE_SUCC (loop_b->header, 1);
 +        }
 +
++        tree* results = static_cast<tree*> (xmalloc (sizeof (tree) * gimple_phi_count (next_bb)));
++        tree* defs = static_cast<tree*> (xmalloc (sizeof (tree) * gimple_phi_count (next_bb)));
++        struct ssa_use_operand_d* imm_uses = static_cast<struct ssa_use_operand_d*> (xmalloc(sizeof(ssa_use_operand_d) * gimple_phi_count(next_bb)));
++        struct phi_arg_d** args = static_cast<struct phi_arg_d**> (xmalloc (sizeof (struct phi_arg_d*) * gimple_phi_count (next_bb)));
++
++        unsigned int i = 0;
++        
++        //If it is removed, the path to the next_bb will break the PHI args
++        for(gimple_stmt_iterator gsi = gsi_start_phis (next_bb); !gsi_end_p (gsi); ){
++            gimple phi = gsi_stmt (gsi);
++
++            results[i] = gimple_phi_result(phi);
++            args[i] = gimple_phi_arg(phi, 0);
++            defs[i] = PHI_ARG_DEF_FROM_EDGE (phi, new_pred);
++            imm_uses[i++] = args[i]->imm_use;
++
++            remove_phi_node (&gsi, false);
++        }
++            
++        redirect_edge_and_branch (new_pred, next_bb);
++        remove_edge(EDGE_SUCC(bb6, 0));
++
 +        delete_basic_block (bb6);
++        
++        int phis = i;
++        i = 0;
++        for(int i = 0; i < phis; ++i){
++            gimple phi_new = create_phi_node(results[i], next_bb);
++
++            gimple_phi_set_arg(phi_new, 0, args[i]);
++            gimple_phi_arg (phi_new, 0)->def = defs[i];
++            gimple_phi_arg (phi_new, 0)->imm_use = imm_uses[i];
++        }
++        
++        //Update the statements that may use the new PHI Nodes
++        for(gimple_stmt_iterator gsi = gsi_start_bb (next_bb); !gsi_end_p (gsi); gsi_next (&gsi)){
++            gimple stmt = gsi_stmt (gsi);
++
++            update_stmt(stmt);
++        }
++
++        free (args);
++        free (results);
 +    } else {
 +        set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
-+    }
++    }*/
++    
++    set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
 +    
 +    full_debug("After cleaning basic blocks\n");
 +
@@ -609,11 +691,7 @@ Index: tree-loop-fusion.c
 +    set_immediate_dominator (CDI_DOMINATORS, loop_b->latch, recompute_dominator (CDI_DOMINATORS, loop_b->latch));
 +    set_immediate_dominator (CDI_DOMINATORS, next_bb, recompute_dominator (CDI_DOMINATORS, next_bb));
 +
-+#ifdef ENABLE_CHECKING
-+    verify_loop_structure();
-+    verify_gimple_in_cfg(cfun);
-+    verify_ssa(true);
-+#endif
++    ++fusion_stats.fused;
 +}
 +
 +/* Returns true if  loop_a is dependent on loop_b.  */
@@ -933,6 +1011,16 @@ Index: tree-loop-fusion.c
 +    if (!single_exit(loop)){
 +        return false; 
 +    }
++
++    //It is necessary to know the number of times a loop will iterate
++    if(!loop->any_estimate || !loop->any_upper_bound){
++        return false;
++    }
++    
++    //It is necessary to have a precise estimate
++    if(loop->nb_iterations_estimate != loop->nb_iterations_upper_bound){
++        return false;
++    }
 +     
 +    //The algorithm only supports loops with a header and a latch
 +    if (loop->num_nodes > 2){
@@ -944,6 +1032,11 @@ Index: tree-loop-fusion.c
 +
 +static bool
 +loops_are_mergeable(struct loop *loop_a, struct loop *loop_b){
++    //Both loop should iterate the same number of times
++    if(loop_a->nb_iterations_estimate != loop_b->nb_iterations_estimate){
++        return false;
++    }
++
 +    //Only support loops with only one basic block between them
 +    unsigned int distance = distance_between_loops (loop_a, loop_b);
 +    if(distance != 1){
@@ -993,8 +1086,14 @@ Index: tree-loop-fusion.c
 +{
 +    //If there are no loops, no need to go farther
 +    if (!current_loops){
++        //Add an event for the fusion stats
++        statistics_counter_event (cfun, "Loop Fused", 0);
++
 +        return 0;
 +    }
++    
++    //Init the stats
++    memset (&fusion_stats, 0, sizeof (fusion_stats));
 +   
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
 +        int num_loops = number_of_loops();
@@ -1063,9 +1162,28 @@ Index: tree-loop-fusion.c
 +            }
 +        }
 +    }
++    
++    //Update and verify the function is loops were fused
++    if(fusion_stats.fused > 0){
++        //The merging strategy does not take virtual operands into account
++        mark_virtual_operands_for_renaming (cfun);
 +
-+    //Make sure the function is transformed in LCSSA
-+    rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
++        //Make sure the function is transformed in LCSSA
++        rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
++
++        //Update if necessary
++        update_ssa(TODO_update_ssa);
++
++        //Activate verification of the whole function
++        #ifdef ENABLE_CHECKING
++            verify_loop_structure();
++            verify_gimple_in_cfg(cfun);
++            verify_ssa(true);
++        #endif
++    }
++  
++    //Add an event for the fusion stats
++    statistics_counter_event (cfun, "Loop Fused", fusion_stats.fused);
 +
 +    /* struct graph *original_graph_1 = new_graph (num_loops);
 +       original_graph_1 = create_original_graph (num_loops);
