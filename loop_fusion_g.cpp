@@ -1,6 +1,6 @@
 #include <iostream>
 
-static const unsigned long SIZE = 100000000;
+static const unsigned long SIZE = 100000000L;
 
 /*
  * Test to verify illegal loops. 

@@ -1,6 +1,6 @@
 #include <iostream>
 
-static const unsigned long SIZE = 100000000;
+static const unsigned long SIZE = 100000000L;
 
 /*
  * Simple examples of loops that can merged. 
@@ -14,7 +14,7 @@ int main(){
     unsigned long sum = 0; 
     
     //This loop won't be merged    
-    for(unsigned long i = 0; i < 50; ++i){
+    for(unsigned long j = 0; j < 25; ++j){
         //This loop should be merged with the following
         for(unsigned long j = 0; j < SIZE; ++j){
             array[j] = j;
@@ -25,11 +25,6 @@ int main(){
             sum = array[j];
         }
     }
-
-    //This loop won't be merged    
-    /*for(unsigned long j = 0; j < SIZE; ++j){
-        array[j] = j;
-    }*/
 
     std::cout << sum << std::endl;
 

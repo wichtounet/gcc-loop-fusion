@@ -1,6 +1,6 @@
 #include <iostream>
 
-static const unsigned long SIZE = 100000000;
+static const unsigned long SIZE = 100000000L;
 
 /*
  * Merged correctly by the algorithm. 
@@ -14,7 +14,7 @@ int main(){
     unsigned long sum = 0; 
     
     //This loop won't be merged    
-    for(unsigned long i = 0; i < 50; ++i){
+    for(unsigned long j = 0; j < 25; ++j){
         //This loop should be merged with the following
         for(unsigned long i = 0; i < SIZE; ++i){
             array[i] = i;

@@ -1,9 +1,11 @@
 #include <iostream>
 
-static const unsigned long SIZE = 100000000;
+static const unsigned long SIZE = 100000000L;
 
 /*
- * Verify the PHI nodes between the two blocks
+ * Verify the PHI nodes between the two blocks.
+ *
+ * The loops won't be merged because of the PHI node between the two loops.
  */
 
 int main(){
@@ -17,13 +19,13 @@ int main(){
     }
     
     //This loop won't be merged    
-    for(unsigned long i = 0; i < 50; ++i){
-        //This loop should be merged with the next
+    for(unsigned long j = 0; j < 25; ++j){
+        //This loop won't be merged
         for(unsigned long i = 0; i < SIZE; ++i){
             sum += array[i];
         }
 
-        //This loop should be merged with the previous 
+        //This loop won't be merged
         for(unsigned long i = 0; i < SIZE; ++i){
             sum += array[i];
         }
