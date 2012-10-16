@@ -36,7 +36,7 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1181 @@
+@@ -0,0 +1,920 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -285,39 +285,6 @@ Index: tree-loop-fusion.c
 +    return false;
 +  else
 +    return true;
-+}
-+
-+/* Returns true if there is no fusion preventing constraint between two given loops.  */
-+
-+static bool
-+no_fusion_preventing_constraint (struct loop * /*loop_a*/, struct loop * /*loop_b*/)
-+{
-+  bool ret = true;
-+  /*struct loop *father_loop;
-+  father_loop = find_common_loop (loop_a, loop_b);
-+  struct graph *rdg_father;
-+  rdg_father = build_rdg (father_loop);
-+  struct graph *rdg_a;
-+  rdg_a = build_rdg (loop_a);
-+  struct graph *rdg_b;
-+  rdg_b = build_rdg (loop_b);*/
-+  return ret;
-+}
-+
-+/* Returns true when two loops can be fused.  */
-+
-+static bool
-+can_fuse_loops (struct loop *loop_a, struct loop *loop_b, struct obstack * parloop_obstack)
-+{
-+  if ((loop_parallel_p (loop_a, parloop_obstack) && loop_parallel_p (loop_b, parloop_obstack) && no_fusion_preventing_constraint (loop_a, loop_b)) || 
-+      (is_sequential_loop (loop_a, parloop_obstack) && is_sequential_loop (loop_b, parloop_obstack) && no_fusion_preventing_constraint (loop_a, loop_b)))
-+    {
-+      if (dump_file && (dump_flags & TDF_DETAILS))
-+        fprintf (dump_file, " can fuse loops %d %d ", loop_a->num, loop_b->num);
-+      return true;
-+    }
-+
-+  return false;
 +}
 +
 +/* 
@@ -673,313 +640,99 @@ Index: tree-loop-fusion.c
 +    }
 +}
 +
-+/* Returns true if  loop_a is dependent on loop_b.  */
++/* Print a debug message if logging is enabled */
++
++static inline void
++print (const char* message){
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, message);
++    }
++}
++
++/* Returns true if loops are independent. */
 +
 +static bool
-+is_dependent_on (struct loop *loop_a, struct loop *loop_b)
-+{
-+  bool ret = false;
-+  struct loop *loop_father;
-+  loop_father = find_common_loop (loop_a, loop_b);
++are_independent (struct loop *loop_a, struct loop *loop_b){
++  VEC (data_reference_p, heap) *datarefs_a = VEC_alloc (data_reference_p, heap, 10);
++  VEC (data_reference_p, heap) *datarefs_b = VEC_alloc (data_reference_p, heap, 10);
 +
-+  VEC (ddr_p, heap) * dependence_relations_a;
-+  VEC (ddr_p, heap) * dependence_relations_b;
-+  VEC (ddr_p, heap) * dependence_relations_father;
++  VEC (ddr_p, heap) *dependence_relations_a = VEC_alloc (ddr_p, heap, 10 * 10);
++  VEC (ddr_p, heap) *dependence_relations_b = VEC_alloc (ddr_p, heap, 10 * 10);
 +  
-+  VEC (loop_p, heap) *loop_nest_a;
-+  VEC (loop_p, heap) *loop_nest_b;
-+  VEC (loop_p, heap) *loop_nest_father;
-+
-+  VEC (data_reference_p, heap) * datarefs_a;
-+  VEC (data_reference_p, heap) * datarefs_b;
-+  VEC (data_reference_p, heap) * datarefs_father;
-+  
-+  datarefs_a = VEC_alloc (data_reference_p, heap, 10);
-+  datarefs_b = VEC_alloc (data_reference_p, heap, 10);
-+  datarefs_father = VEC_alloc (data_reference_p, heap, 10);
-+
-+  dependence_relations_a = VEC_alloc (ddr_p, heap, 10 * 10);
-+  dependence_relations_b = VEC_alloc (ddr_p, heap, 10 * 10);
-+  dependence_relations_father = VEC_alloc (ddr_p, heap, 10 * 10);
-+  
-+  loop_nest_a = VEC_alloc (loop_p, heap, 3);
-+  loop_nest_b = VEC_alloc (loop_p, heap, 3);
-+  loop_nest_father = VEC_alloc (loop_p, heap, 3);
++  VEC (loop_p, heap) *loop_nest_a = VEC_alloc (loop_p, heap, 3);
++  VEC (loop_p, heap) *loop_nest_b = VEC_alloc (loop_p, heap, 3);
 +
 +  compute_data_dependences_for_loop (loop_a, true, &loop_nest_a, &datarefs_a, &dependence_relations_a); 
 +  compute_data_dependences_for_loop (loop_b, true, &loop_nest_b, &datarefs_b, &dependence_relations_b);
-+  compute_data_dependences_for_loop (loop_father, true, &loop_nest_father, &datarefs_father, &dependence_relations_father);
-+  
-+  debug_data_dependence_relations (dependence_relations_a);
-+  debug_data_dependence_relations (dependence_relations_b);
-+  debug_data_dependence_relations (dependence_relations_father);
 +  
 +  if (dump_file && (dump_flags & TDF_DETAILS)){
-+      fprintf (dump_file, "dumping data dependences of a \n");
-+      dump_data_dependence_relations (dump_file, dependence_relations_a);
-+      fprintf (dump_file, "dumping data dependences of b \n");
-+      dump_data_dependence_relations (dump_file, dependence_relations_b);
-+      fprintf (dump_file, "dumping data dependences of father \n");
-+      dump_data_dependence_relations (dump_file, dependence_relations_father); 
-+  }
++      data_reference_p dataref_a;
++      data_reference_p dataref_b;
++      unsigned int i;
 +
-+  free_dependence_relations (dependence_relations_a);
-+  free_data_refs (datarefs_a);
-+  free_dependence_relations (dependence_relations_b);
-+  free_data_refs (datarefs_b);
-+  free_dependence_relations (dependence_relations_father);
-+  free_data_refs (datarefs_father);
-+  
-+  VEC_free (loop_p, heap, loop_nest_a);
-+  VEC_free (loop_p, heap, loop_nest_b);
-+  VEC_free (loop_p, heap, loop_nest_father);
-+
-+  return true;
-+}
-+
-+/* Structure to hold the list of partitions.  */
-+
-+struct partition 
-+{
-+  int num;
-+  int list[10];
-+  int present;
-+  char type; 
-+} ;
-+
-+
-+/* Create a graph original_graph. It's nodes are loops and it's edges are data dependencies.  */
-+
-+static struct graph *
-+create_original_graph (int num_loops, struct obstack * parloop_obstack)
-+{
-+    struct graph *g = new_graph (num_loops);
-+    struct loop *loop;
-+    loop_iterator li;
-+    FOR_EACH_LOOP (li, loop, 0)
-+    {
-+        struct partition *p = XNEW (struct partition);
-+        p->num = 0;
-+        p->list[p->num] = loop->num;
-+        p->num++;
-+        p->present = 1;
-+
-+        if (loop_parallel_p (loop, parloop_obstack))
-+        {
-+            p->type = 'P';
-+            g->vertices[loop->num].data = p;
-+        }
-+        else
-+        {
-+            p->type = 'S';
-+            g->vertices[loop->num].data = p;
-+        } 
-+    }
-+
-+    FOR_EACH_LOOP (li, loop, 0)
-+    {
-+        struct loop *loop_dummy;
-+        loop_iterator li_dummy;
-+        FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
-+        {
-+            if (loop != loop_dummy)
-+            {
-+                if (is_dependent_on (loop, loop_dummy))
-+                {
-+                    if (no_fusion_preventing_constraint (loop, loop_dummy))
-+                    {
-+                        struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
-+                        ge->data = const_cast<char*>("FPE");
-+                    } else {
-+                        add_edge (g, loop_dummy->num, loop->num);
-+                    }
-+                }
-+            }
-+        }  
-+    }
-+
-+    return g;  
-+}
-+
-+/* Create a component graph from the original graph. The parameter t denotes type of the component graph -
-+   parallel or sequential.  */
-+
-+static struct graph*
-+create_component_graph (char t, int num_loops)
-+{
-+  struct obstack parloop_obstack;
-+  gcc_obstack_init (&parloop_obstack);
-+
-+  struct graph *og = create_original_graph (num_loops, &parloop_obstack);
-+  struct graph *g = new_graph (num_loops);
-+  struct partition *p, *q, *r;
-+  int i;
-+  char opp; 
-+  if (t == 'P')
-+    opp = 'S';
-+  else
-+    opp = 'P';
-+  struct loop *loop;
-+  loop_iterator li;
-+
-+  for (i = 1; i < num_loops; i++)
-+  {
-+      p = XNEW (struct partition);
-+      p = static_cast<partition*>(og->vertices[i].data);
-+      if (p->type == t)
-+      {
-+          q = XNEW (struct partition);
-+          q->num = 0;
-+          q->list[q->num] = i;
-+          q->num++;
-+          q->present = 1;
-+          q->type = t;
-+          g->vertices[i].data = q;
-+      } 
-+  } 
-+
-+  if (t == 'P'){
-+      FOR_EACH_LOOP (li, loop, 0)
-+      {
-+          struct loop *loop_dummy;
-+          loop_iterator li_dummy;
-+          FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
-+          {
-+              if (loop != loop_dummy)
-+              {
-+                  if (is_dependent_on (loop, loop_dummy)&& (loop_parallel_p (loop, &parloop_obstack)) && (loop_parallel_p (loop_dummy, &parloop_obstack)))
-+                  {
-+                      if (no_fusion_preventing_constraint (loop, loop_dummy))
-+                      {
-+                          struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
-+                          ge->data = const_cast<char*>("FPE");
-+                      } 
-+                      else 
-+                          add_edge (g, loop_dummy->num, loop->num);
-+                  }
-+              }
-+          }  
++      fprintf (dump_file, "dumping data references of a \n");
++      FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, i, dataref_a){
++          dump_data_reference(dump_file, dataref_a);
++      }
++      
++      fprintf (dump_file, "dumping data references of b \n");
++      FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_b){
++          dump_data_reference(dump_file, dataref_b);
 +      }
 +  }
++      
++  data_reference_p dataref_first;
++  data_reference_p dataref_second;
++  unsigned int i;
++  unsigned int j;
++      
++  //If no dependences are found later, the loops are not dependent
++  bool ret = true;
 +
-+  if (t =='S'){
-+      FOR_EACH_LOOP (li, loop, 0)
-+      {
-+          struct loop *loop_dummy;
-+          loop_iterator li_dummy;
-+          FOR_EACH_LOOP (li_dummy, loop_dummy, 0)
-+          {
-+              if (loop != loop_dummy)
-+              {
-+                  if (is_dependent_on (loop, loop_dummy)&& (is_sequential_loop (loop, &parloop_obstack)) && (is_sequential_loop (loop_dummy, &parloop_obstack)))
-+                  {
-+                      if (no_fusion_preventing_constraint (loop, loop_dummy))
-+                      {
-+                          struct graph_edge *ge = add_edge (g, loop_dummy->num, loop->num);
-+                          ge->data = const_cast<char*>("FPE");
-+                      } 
-+                      else 
-+                          add_edge (g, loop_dummy->num, loop->num);
++  //Consider each pair of dependences between the loops
++  FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_first){
++      FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, j, dataref_second){
++
++          if(same_data_refs_base_objects(dataref_first, dataref_second)){
++              if(DR_IS_READ(dataref_first) && DR_IS_READ(dataref_second)){
++                  print ("Found an input-dependence\n");
++                  //Input reference can be ignored
++              } else if(DR_IS_WRITE(dataref_first) && DR_IS_WRITE(dataref_second)){
++                  print ("Found an output-dependence\n");
++
++                  if(!same_data_refs (dataref_first, dataref_second)){
++                      print ("An output-dependence is blocking\n");
++                      ret = false;
 +                  }
-+              }
-+          }  
-+      }
-+  }
-+  
-+  for (i = 1; i < num_loops; i++)
-+  {
-+      p = XNEW (struct partition);
-+      p = static_cast<partition*>(og->vertices[i].data);
-+      if (p->type == opp)
-+      { 
-+          struct graph_edge *ges;
-+          for (ges = og->vertices[i].pred; ges; ges = ges->pred_next)
-+          {
-+              int source = ges->src;
-+              struct graph_edge *ged; 
-+              for (ged = og->vertices[i].succ; ged; ged = ged->succ_next)
-+              { 
-+                  int destin = ged->dest;
-+                  q = XNEW (struct partition);
-+                  q = static_cast<partition*>(og->vertices[source].data);
-+                  r = XNEW (struct partition);
-+                  r = static_cast<partition*>(og->vertices[destin].data);
-+                  if ((q->type == t) && (r->type == t) && (q->list[0] != r->list[0]))
-+                  {
-+                      struct graph_edge *ge = add_edge (g, source, destin); 
-+                      ge->data = const_cast<char*>("FPE");
++              } else if(DR_IS_READ(dataref_first) && DR_IS_WRITE(dataref_second)){
++                  print ("Found an anti-dependence\n");
++
++                  if(!same_data_refs (dataref_first, dataref_second)){
++                      print ("An anti-dependence is blocking\n");
++                      ret = false;
++                  }
++              } else if(DR_IS_WRITE(dataref_first) && DR_IS_READ(dataref_second)){
++                  print ("Found a true-dependence\n");
++
++                  if(!same_data_refs (dataref_first, dataref_second)){
++                      print ("A true-dependence is blocking\n");
++                      ret = false;
 +                  }
 +              }
 +          }
 +      }
 +  }
 +
-+  obstack_free (&parloop_obstack, NULL);
++  free_dependence_relations (dependence_relations_a);
++  free_dependence_relations (dependence_relations_b);
++  
++  free_data_refs (datarefs_a);
++  free_data_refs (datarefs_b);
++  
++  VEC_free (loop_p, heap, loop_nest_a);
++  VEC_free (loop_p, heap, loop_nest_b);
 +
-+  return g;
-+}
-+
-+
-+/* Partitions the graph according to rules. And fuse the loops corresponding to the partitions.  */
-+
-+    static void 
-+do_partitions (struct graph *g)
-+{
-+    int num = g->n_vertices;
-+    int i;
-+    struct partition *p, *q; 
-+    for (i = 1; i<num; i++)
-+    {
-+        p = XNEW (struct partition);
-+        p = static_cast<partition*>(g->vertices[i].data);
-+        struct graph_edge *ge;
-+
-+        if (p){
-+            if (p->present == 1){
-+                for (ge = g->vertices[i].pred; ge; ge = ge->pred_next)
-+                {
-+                    q = XNEW (struct partition);
-+                    q = static_cast<partition*>(g->vertices[ge->src].data);
-+                    
-+                    if (ge->data != "FPE") 
-+                    {
-+                        p->list[p->num] = q->list[0];
-+                        p->num++;
-+                        q->present = 0;
-+                    }
-+                }
-+            }
-+        }
-+    } 
-+}
-+
-+/* Performs loop fusion according to the given graph.  */
-+
-+static void
-+fuse_according_to_graph (struct graph *g)
-+{
-+  int num = g->n_vertices;
-+  int i, j;
-+  struct partition *p; 
-+  struct loop *loop;
-+  loop_iterator li;
-+  for (i = 1; i<num; i++)
-+    {
-+      p = XNEW (struct partition);
-+      p = static_cast<partition*>(g->vertices[i].data);
-+      if (p)
-+        if (p->present == 1)
-+          {
-+            for (j = (p->num)-1; j > 0 ; j--)
-+              {
-+                FOR_EACH_LOOP (li, loop, 0)
-+                  {
-+                    if ((loop->num == p->list[j]) && (loop->next->num == p->list[j-1]))
-+                      fuse_loops (loop, loop->next);
-+                  }
-+              }
-+          } 
-+    } 
++  return ret;
 +}
 +
 +/* Verify if this loop is supported by the merging algorithm */
@@ -1046,8 +799,8 @@ Index: tree-loop-fusion.c
 +        return false;
 +    }
 +
-+    //TODO
-+    return true;
++    //If all the other conditions, the loops needs only to be independent to be fused
++    return are_independent (loop_a, loop_b);
 +}
 +
 +/* Return true if the two loops are interesting to merge, otherwise return false.  */
@@ -1065,10 +818,6 @@ Index: tree-loop-fusion.c
 +{
 +    //If there are no loops, no need to go farther
 +    if (!current_loops){
-+        //Add an event for the fusion stats
-+        statistics_counter_event (cfun, "Loop Fused", 0);
-+        statistics_counter_event (cfun, "Basic Blocks Merged", 0);
-+
 +        return 0;
 +    }
 +    
@@ -1132,16 +881,6 @@ Index: tree-loop-fusion.c
 +
 +                //The cleanup remove empty basic blocks to make further loop fusion possible
 +                cleanup();
-+            }
-+
-+            //if (can_fuse_loops (loop, loop->next))
-+            {
-+                /*if (is_dependent_on (loop, loop->next))
-+                  fprintf (stderr, "loop %d is dependent on loop %d \n\n", loop->num, loop->next->num);
-+                  else
-+                  fprintf (stderr, "loop %d is not dependent on loop %d \n\n", loop->num, loop->next->num);*/ 
-+                
-+                //fuse_loops5 (loop, next);
 +            }
 +        }
 +    }
