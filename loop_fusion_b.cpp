@@ -14,7 +14,7 @@ int main(){
     unsigned long sum = 0; 
     
     //This loop won't be merged    
-    for(unsigned long j = 0; j < 25; ++j){
+    for(unsigned long j = 0; j < 50; ++j){
         //This loop should be merged with the following
         for(unsigned long i = 0; i < SIZE; ++i){
             array[i] = i;

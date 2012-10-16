@@ -55,3 +55,5 @@ time ./a.out
 echo "With fusion"
 ../gcc-trunk-install/bin/g++ -ftree-loop-fusion -O3 loop_fusion_g.cpp
 time ./a.out
+
+echo "END"

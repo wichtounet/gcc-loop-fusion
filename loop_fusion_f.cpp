@@ -12,7 +12,7 @@ int main(){
     unsigned long* array_3 = new unsigned long[SIZE];
     
     //This loop won't be merged    
-    for(unsigned long j = 0; j < 25; ++j){
+    for(unsigned long j = 0; j < 50; ++j){
         //This loop should be merged
         for(unsigned long i = 0; i < SIZE; ++i){
             array_1[i] = i;

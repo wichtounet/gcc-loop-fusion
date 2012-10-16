@@ -19,7 +19,7 @@ int main(){
     }
     
     //This loop won't be merged    
-    for(unsigned long j = 0; j < 25; ++j){
+    for(unsigned long j = 0; j < 50; ++j){
         //This loop won't be merged
         for(unsigned long i = 0; i < SIZE; ++i){
             sum += array[i];
