@@ -13,9 +13,10 @@ int main(){
     unsigned long* array_1 = new unsigned long[SIZE];
     unsigned long* array_2 = new unsigned long[SIZE];
     unsigned long* array_3 = new unsigned long[SIZE];
+    unsigned long* array_4 = new unsigned long[SIZE];
     
     //This loop won't be merged    
-    //for(unsigned long j = 0; j < 50; ++j){
+    for(unsigned long j = 0; j < 50; ++j){
         for(unsigned long i = 0; i < SIZE; ++i){
             array_1[i] = i;
         }
@@ -25,13 +26,18 @@ int main(){
         }
         
         for(unsigned long i = 0; i < SIZE; ++i){
-            array_3[i] = array_1[i];
+            array_3[i] = array_2[i];
         }
-    //}
+        
+        for(unsigned long i = 0; i < SIZE; ++i){
+            array_4[i] = array_3[i];
+        }
+    }
 
     delete[] array_1;
     delete[] array_2;
     delete[] array_3;
+    delete[] array_4;
 
     return 0;
 }
