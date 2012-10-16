@@ -36,7 +36,7 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1197 @@
+@@ -0,0 +1,1238 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -89,6 +89,9 @@ Index: tree-loop-fusion.c
 +{
 +  /* The number of loops fused. */
 +  int fused;
++
++  /* The number of basic blocks merged during the cleanup pass */
++  int merged;
 +
 +} fusion_stats;
 +
@@ -690,8 +693,43 @@ Index: tree-loop-fusion.c
 +    set_immediate_dominator (CDI_DOMINATORS, loop_b->header, recompute_dominator (CDI_DOMINATORS, loop_b->header));
 +    set_immediate_dominator (CDI_DOMINATORS, loop_b->latch, recompute_dominator (CDI_DOMINATORS, loop_b->latch));
 +    set_immediate_dominator (CDI_DOMINATORS, next_bb, recompute_dominator (CDI_DOMINATORS, next_bb));
++    
++    full_debug("After fusion\n");
 +
 +    ++fusion_stats.fused;
++}
++
++/* Indicates if the specified basic block would profit from a merge */
++
++static bool
++dirty(basic_block bb){
++    if(gimple_seq_empty_p (bb_seq (bb)) && gimple_seq_empty_p (phi_nodes (bb))){
++        return single_succ_p (bb) && single_pred_p (bb);
++    }
++
++    return false;
++}
++
++/* Tries to find basic blocks to be merged */
++
++static void
++cleanup(){
++    basic_block bb;
++    
++    FOR_EACH_BB(bb){
++        if(dirty(bb)){
++            basic_block bb_next = bb->next_bb;
++
++            if(bb_next && dirty (bb_next)){
++                //They have to fall through the instruction stream
++                if(single_succ_edge (bb)->dest == bb_next){
++                    merge_blocks(bb, bb_next);
++                    
++                    ++fusion_stats.merged;
++                }
++            }
++        }
++    }
 +}
 +
 +/* Returns true if  loop_a is dependent on loop_b.  */
@@ -1149,6 +1187,8 @@ Index: tree-loop-fusion.c
 +            //Finally, if they are interesting to merge, merge them
 +            if(loops_are_interesting_to_merge (loop, next)){
 +                fuse_loops (loop, next);
++
++                cleanup();
 +            }
 +
 +            //if (can_fuse_loops (loop, loop->next))
@@ -1182,8 +1222,9 @@ Index: tree-loop-fusion.c
 +        #endif
 +    }
 +  
-+    //Add an event for the fusion stats
++    //Add events for this pass 
 +    statistics_counter_event (cfun, "Loop Fused", fusion_stats.fused);
++    statistics_counter_event (cfun, "Blocks Merged", fusion_stats.merged);
 +
 +    /* struct graph *original_graph_1 = new_graph (num_loops);
 +       original_graph_1 = create_original_graph (num_loops);
