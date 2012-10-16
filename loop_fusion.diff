@@ -36,7 +36,7 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1238 @@
+@@ -0,0 +1,1181 @@
 +/* Loop fusion. */
 +
 +/* This pass performs loop fusion: for example, the loops
@@ -622,66 +622,6 @@ Index: tree-loop-fusion.c
 +        set_immediate_dominator (CDI_DOMINATORS, between_bb, recompute_dominator (CDI_DOMINATORS, between_bb));
 +    }
 +    
-+    //Remove the old loop header if possible
-+    /*if(gimple_seq_empty_p (phi_nodes (bb6)) && gimple_seq_empty_p (bb_seq (bb6))){
-+        edge new_pred;
-+
-+        //If the between basic block has not been removed
-+        if(EDGE_SUCC (loop_b->header, 1)->dest == between_bb){
-+            new_pred = EDGE_SUCC (between_bb, 0);
-+        } else {
-+            new_pred = EDGE_SUCC (loop_b->header, 1);
-+        }
-+
-+        tree* results = static_cast<tree*> (xmalloc (sizeof (tree) * gimple_phi_count (next_bb)));
-+        tree* defs = static_cast<tree*> (xmalloc (sizeof (tree) * gimple_phi_count (next_bb)));
-+        struct ssa_use_operand_d* imm_uses = static_cast<struct ssa_use_operand_d*> (xmalloc(sizeof(ssa_use_operand_d) * gimple_phi_count(next_bb)));
-+        struct phi_arg_d** args = static_cast<struct phi_arg_d**> (xmalloc (sizeof (struct phi_arg_d*) * gimple_phi_count (next_bb)));
-+
-+        unsigned int i = 0;
-+        
-+        //If it is removed, the path to the next_bb will break the PHI args
-+        for(gimple_stmt_iterator gsi = gsi_start_phis (next_bb); !gsi_end_p (gsi); ){
-+            gimple phi = gsi_stmt (gsi);
-+
-+            results[i] = gimple_phi_result(phi);
-+            args[i] = gimple_phi_arg(phi, 0);
-+            defs[i] = PHI_ARG_DEF_FROM_EDGE (phi, new_pred);
-+            imm_uses[i++] = args[i]->imm_use;
-+
-+            remove_phi_node (&gsi, false);
-+        }
-+            
-+        redirect_edge_and_branch (new_pred, next_bb);
-+        remove_edge(EDGE_SUCC(bb6, 0));
-+
-+        delete_basic_block (bb6);
-+        
-+        int phis = i;
-+        i = 0;
-+        for(int i = 0; i < phis; ++i){
-+            gimple phi_new = create_phi_node(results[i], next_bb);
-+
-+            gimple_phi_set_arg(phi_new, 0, args[i]);
-+            gimple_phi_arg (phi_new, 0)->def = defs[i];
-+            gimple_phi_arg (phi_new, 0)->imm_use = imm_uses[i];
-+        }
-+        
-+        //Update the statements that may use the new PHI Nodes
-+        for(gimple_stmt_iterator gsi = gsi_start_bb (next_bb); !gsi_end_p (gsi); gsi_next (&gsi)){
-+            gimple stmt = gsi_stmt (gsi);
-+
-+            update_stmt(stmt);
-+        }
-+
-+        free (args);
-+        free (results);
-+    } else {
-+        set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
-+    }*/
-+    
-+    set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
-+    
 +    full_debug("After cleaning basic blocks\n");
 +
 +    /* 7. Update SSA */
@@ -693,6 +633,7 @@ Index: tree-loop-fusion.c
 +    set_immediate_dominator (CDI_DOMINATORS, loop_b->header, recompute_dominator (CDI_DOMINATORS, loop_b->header));
 +    set_immediate_dominator (CDI_DOMINATORS, loop_b->latch, recompute_dominator (CDI_DOMINATORS, loop_b->latch));
 +    set_immediate_dominator (CDI_DOMINATORS, next_bb, recompute_dominator (CDI_DOMINATORS, next_bb));
++    set_immediate_dominator (CDI_DOMINATORS, bb6, recompute_dominator (CDI_DOMINATORS, bb6));
 +    
 +    full_debug("After fusion\n");
 +
@@ -1126,11 +1067,12 @@ Index: tree-loop-fusion.c
 +    if (!current_loops){
 +        //Add an event for the fusion stats
 +        statistics_counter_event (cfun, "Loop Fused", 0);
++        statistics_counter_event (cfun, "Basic Blocks Merged", 0);
 +
 +        return 0;
 +    }
 +    
-+    //Init the stats
++    //Initialize the stats
 +    memset (&fusion_stats, 0, sizeof (fusion_stats));
 +   
 +    if (dump_file && (dump_flags & TDF_DETAILS)){
@@ -1188,6 +1130,7 @@ Index: tree-loop-fusion.c
 +            if(loops_are_interesting_to_merge (loop, next)){
 +                fuse_loops (loop, next);
 +
++                //The cleanup remove empty basic blocks to make further loop fusion possible
 +                cleanup();
 +            }
 +
@@ -1224,7 +1167,7 @@ Index: tree-loop-fusion.c
 +  
 +    //Add events for this pass 
 +    statistics_counter_event (cfun, "Loop Fused", fusion_stats.fused);
-+    statistics_counter_event (cfun, "Blocks Merged", fusion_stats.merged);
++    statistics_counter_event (cfun, "Basic Blocks Merged", fusion_stats.merged);
 +
 +    /* struct graph *original_graph_1 = new_graph (num_loops);
 +       original_graph_1 = create_original_graph (num_loops);
