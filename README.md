@@ -1,4 +1,4 @@
 gcc-loop-fusion
 ===============
 
-GCC Loop Fusion
+Project to implement a Loop Fusion pass for GCC. 
