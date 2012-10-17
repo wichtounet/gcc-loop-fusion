@@ -36,54 +36,21 @@ Index: tree-loop-fusion.c
 ===================================================================
 --- tree-loop-fusion.c	(revision 0)
 +++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,920 @@
-+/* Loop fusion. */
-+
-+/* This pass performs loop fusion: for example, the loops
-+
-+   |loop_1
-+   |  A[i] = ...
-+   |endloop_1
-+
-+
-+   |loop_2
-+   |  ... = A[i]
-+   |endloop_2
-+
-+   that becomes after fusion:
-+
-+   |loop_1
-+   |  A[i] = ...
-+   |  ... = A[i]
-+   |endloop_1
-+
-+*/
-+
-+#include <iostream>
-+
+@@ -0,0 +1,702 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
-+#include "tm.h"
-+#include "ggc.h"
 +#include "tree.h"
-+#include "target.h"
 +
-+#include "rtl.h"
 +#include "basic-block.h"
-+#include "diagnostic.h"
 +#include "tree-flow.h"
 +#include "tree-dump.h"
 +#include "timevar.h"
 +#include "cfgloop.h"
-+#include "expr.h"
-+#include "optabs.h"
 +#include "tree-chrec.h"
 +#include "tree-data-ref.h"
 +#include "tree-scalar-evolution.h"
 +#include "tree-pass.h"
-+#include "langhooks.h"
-+#include "tree-vectorizer.h"
 +
 +static struct
 +{
@@ -95,196 +62,13 @@ Index: tree-loop-fusion.c
 +
 +} fusion_stats;
 +
-+//TODO Copied from tree-parloops.c, should be put in a common header
++/* Print a debug message if logging is enabled */
 +
-+/* A transformation matrix, which is a self-contained ROWSIZE x COLSIZE
-+   matrix.  Rather than use floats, we simply keep a single DENOMINATOR that
-+   represents the denominator for every element in the matrix.  */
-+typedef struct lambda_trans_matrix_s
-+{
-+  lambda_matrix matrix;
-+  int rowsize;
-+  int colsize;
-+  int denominator;
-+} *lambda_trans_matrix;
-+#define LTM_MATRIX(T) ((T)->matrix)
-+#define LTM_ROWSIZE(T) ((T)->rowsize)
-+#define LTM_COLSIZE(T) ((T)->colsize)
-+#define LTM_DENOMINATOR(T) ((T)->denominator)
-+
-+/* Allocate a new transformation matrix.  */
-+
-+static lambda_trans_matrix
-+lambda_trans_matrix_new (int colsize, int rowsize,
-+			 struct obstack * lambda_obstack)
-+{
-+  lambda_trans_matrix ret;
-+
-+  ret = (lambda_trans_matrix)
-+    obstack_alloc (lambda_obstack, sizeof (struct lambda_trans_matrix_s));
-+  LTM_MATRIX (ret) = lambda_matrix_new (rowsize, colsize, lambda_obstack);
-+  LTM_ROWSIZE (ret) = rowsize;
-+  LTM_COLSIZE (ret) = colsize;
-+  LTM_DENOMINATOR (ret) = 1;
-+  return ret;
-+}
-+
-+/* Multiply a vector VEC by a matrix MAT.
-+   MAT is an M*N matrix, and VEC is a vector with length N.  The result
-+   is stored in DEST which must be a vector of length M.  */
-+
-+static void
-+lambda_matrix_vector_mult (lambda_matrix matrix, int m, int n,
-+			   lambda_vector vec, lambda_vector dest)
-+{
-+  int i, j;
-+
-+  lambda_vector_clear (dest, m);
-+  for (i = 0; i < m; i++)
-+    for (j = 0; j < n; j++)
-+      dest[i] += matrix[i][j] * vec[j];
-+}
-+
-+/* Return true if TRANS is a legal transformation matrix that respects
-+   the dependence vectors in DISTS and DIRS.  The conservative answer
-+   is false.
-+
-+   "Wolfe proves that a unimodular transformation represented by the
-+   matrix T is legal when applied to a loop nest with a set of
-+   lexicographically non-negative distance vectors RDG if and only if
-+   for each vector d in RDG, (T.d >= 0) is lexicographically positive.
-+   i.e.: if and only if it transforms the lexicographically positive
-+   distance vectors to lexicographically positive vectors.  Note that
-+   a unimodular matrix must transform the zero vector (and only it) to
-+   the zero vector." S.Muchnick.  */
-+
-+static bool
-+lambda_transform_legal_p (lambda_trans_matrix trans,
-+			  int nb_loops,
-+			  VEC (ddr_p, heap) *dependence_relations)
-+{
-+  unsigned int i, j;
-+  lambda_vector distres;
-+  struct data_dependence_relation *ddr;
-+
-+  gcc_assert (LTM_COLSIZE (trans) == nb_loops
-+	      && LTM_ROWSIZE (trans) == nb_loops);
-+
-+  /* When there are no dependences, the transformation is correct.  */
-+  if (VEC_length (ddr_p, dependence_relations) == 0)
-+    return true;
-+
-+  ddr = VEC_index (ddr_p, dependence_relations, 0);
-+  if (ddr == NULL)
-+    return true;
-+
-+  /* When there is an unknown relation in the dependence_relations, we
-+     know that it is no worth looking at this loop nest: give up.  */
-+  if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
-+    return false;
-+
-+  distres = lambda_vector_new (nb_loops);
-+
-+  /* For each distance vector in the dependence graph.  */
-+  FOR_EACH_VEC_ELT (ddr_p, dependence_relations, i, ddr)
-+    {
-+      /* Don't care about relations for which we know that there is no
-+	 dependence, nor about read-read (aka. output-dependences):
-+	 these data accesses can happen in any order.  */
-+      if (DDR_ARE_DEPENDENT (ddr) == chrec_known
-+	  || (DR_IS_READ (DDR_A (ddr)) && DR_IS_READ (DDR_B (ddr))))
-+	continue;
-+
-+      /* Conservatively answer: "this transformation is not valid".  */
-+      if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
-+	return false;
-+
-+      /* If the dependence could not be captured by a distance vector,
-+	 conservatively answer that the transform is not valid.  */
-+      if (DDR_NUM_DIST_VECTS (ddr) == 0)
-+	return false;
-+
-+      /* Compute trans.dist_vect */
-+      for (j = 0; j < DDR_NUM_DIST_VECTS (ddr); j++)
-+	{
-+	  lambda_matrix_vector_mult (LTM_MATRIX (trans), nb_loops, nb_loops,
-+				     DDR_DIST_VECT (ddr, j), distres);
-+
-+	  if (!lambda_vector_lexico_pos (distres, nb_loops))
-+	    return false;
-+	}
++static inline void
++print (const char* message){
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        fprintf (dump_file, message);
 +    }
-+  return true;
-+}
-+
-+/* Data dependency analysis. Returns true if the iterations of LOOP
-+   are independent on each other (that is, if we can execute them
-+   in parallel).  */
-+
-+static bool
-+loop_parallel_p (struct loop *loop, struct obstack * parloop_obstack)
-+{
-+  VEC (loop_p, heap) *loop_nest;
-+  VEC (ddr_p, heap) *dependence_relations;
-+  VEC (data_reference_p, heap) *datarefs;
-+  lambda_trans_matrix trans;
-+  bool ret = false;
-+
-+  if (dump_file && (dump_flags & TDF_DETAILS))
-+  {
-+    fprintf (dump_file, "Considering loop %d\n", loop->num);
-+    if (!loop->inner)
-+      fprintf (dump_file, "loop is innermost\n");
-+    else
-+      fprintf (dump_file, "loop NOT innermost\n");
-+   }
-+
-+  /* Check for problems with dependences.  If the loop can be reversed,
-+     the iterations are independent.  */
-+  datarefs = VEC_alloc (data_reference_p, heap, 10);
-+  dependence_relations = VEC_alloc (ddr_p, heap, 10 * 10);
-+  loop_nest = VEC_alloc (loop_p, heap, 3);
-+  if (! compute_data_dependences_for_loop (loop, true, &loop_nest, &datarefs,
-+					   &dependence_relations))
-+    {
-+      if (dump_file && (dump_flags & TDF_DETAILS))
-+	fprintf (dump_file, "  FAILED: cannot analyze data dependencies\n");
-+      ret = false;
-+      goto end;
-+    }
-+  if (dump_file && (dump_flags & TDF_DETAILS))
-+    dump_data_dependence_relations (dump_file, dependence_relations);
-+
-+  trans = lambda_trans_matrix_new (1, 1, parloop_obstack);
-+  LTM_MATRIX (trans)[0][0] = -1;
-+
-+  if (lambda_transform_legal_p (trans, 1, dependence_relations))
-+    {
-+      ret = true;
-+      if (dump_file && (dump_flags & TDF_DETAILS))
-+	fprintf (dump_file, "  SUCCESS: may be parallelized\n");
-+    }
-+  else if (dump_file && (dump_flags & TDF_DETAILS))
-+    fprintf (dump_file,
-+	     "  FAILED: data dependencies exist across iterations\n");
-+
-+ end:
-+  VEC_free (loop_p, heap, loop_nest);
-+  free_dependence_relations (dependence_relations);
-+  free_data_refs (datarefs);
-+
-+  return ret;
-+}
-+
-+/* Returns true when a given loop is a sequential loop.  */
-+
-+static bool
-+is_sequential_loop (struct loop *loop, struct obstack * parloop_obstack)
-+{
-+  if (loop_parallel_p (loop, parloop_obstack))
-+    return false;
-+  else
-+    return true;
 +}
 +
 +/* 
@@ -359,42 +143,16 @@ Index: tree-loop-fusion.c
 + */
 +
 +static basic_block
-+basic_block_between (struct loop *loop_a, struct loop *loop_b){
++basic_block_between (struct loop *loop_a, struct loop* loop_b){
 +    //Some loops appears to have their latch first, so taking latch and header
 +    //is not enough to determine the distance
 +    basic_block last_bb = get_last_bb (loop_b);
 +
-+    return last_bb->next_bb;
-+}
++    basic_block between_bb = last_bb->next_bb;
 +
-+/*
-+ * Return the number of PHI nodes in the given Basic Block.
-+ */
++    gcc_assert(between_bb->next_bb == get_first_bb (loop_a));
 +
-+static unsigned int
-+gimple_phi_count (basic_block bb){
-+    unsigned int count = 0;
-+
-+    for(gimple_stmt_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi); gsi_next (&gsi)){
-+        ++count;
-+    }
-+
-+    return count;
-+}
-+
-+/*
-+ * Return the number of GIMPLE statement in the given Basic Block.
-+ */
-+
-+static unsigned int
-+gimple_stmt_count (basic_block bb){
-+    unsigned int count = 0;
-+
-+    for(gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi)){
-+        ++count;
-+    }
-+
-+    return count;
++    return between_bb;
 +}
 +
 +/* Return the induction variable SSA name for this loop */
@@ -481,7 +239,7 @@ Index: tree-loop-fusion.c
 +        gimple phi_orig = gsi_stmt (gsi);
 +        
 +        if(SSA_NAME_VAR(gimple_phi_result(phi_orig)) != SSA_NAME_VAR(ssa_iv_name_a)){
-+            fprintf (dump_file, "Found a PHI node to copy \n");
++            print ("Found a PHI node to copy \n");
 +
 +            tree res = gimple_phi_result(phi_orig);
 +            gimple phi_new = create_phi_node(res, loop_b->header);
@@ -535,7 +293,6 @@ Index: tree-loop-fusion.c
 +    /* 5. Delete the loop A */
 +    
 +    //Save them before loop gets deleted
-+    basic_block header_b = loop_b->header;
 +    basic_block between_bb = basic_block_between (loop_a, loop_b);
 +    basic_block bb6 = loop_a->header;
 +    basic_block bb7 = loop_a->latch;
@@ -640,99 +397,146 @@ Index: tree-loop-fusion.c
 +    }
 +}
 +
-+/* Print a debug message if logging is enabled */
++/* Returns true if the access functions are equivalent, the induction variable may vary. */
 +
-+static inline void
-+print (const char* message){
-+    if (dump_file && (dump_flags & TDF_DETAILS)){
-+        fprintf (dump_file, message);
++static bool
++are_equivalent_functions (const_tree chrec0, const_tree chrec1){
++    if (chrec0 == NULL_TREE || chrec1 == NULL_TREE || TREE_CODE (chrec0) != TREE_CODE (chrec1)){
++        return false;
 +    }
++
++    if (chrec0 == chrec1){
++        return true;
++    }
++
++    switch (TREE_CODE (chrec0)){
++        case INTEGER_CST:
++            return operand_equal_p (chrec0, chrec1, 0);
++
++        case POLYNOMIAL_CHREC:
++            return eq_evolutions_p (CHREC_LEFT (chrec0), CHREC_LEFT (chrec1))
++                && eq_evolutions_p (CHREC_RIGHT (chrec0), CHREC_RIGHT (chrec1));
++
++        case PLUS_EXPR:
++        case MULT_EXPR:
++        case MINUS_EXPR:
++        case POINTER_PLUS_EXPR:
++            return eq_evolutions_p (TREE_OPERAND (chrec0, 0), TREE_OPERAND (chrec1, 0))
++                && eq_evolutions_p (TREE_OPERAND (chrec0, 1), TREE_OPERAND (chrec1, 1));
++
++        default:
++            return false;
++    }
++}
++
++/* Returns true if both data references have equivalent access function, the induction variable may change. */
++
++static inline bool
++are_equivalent (data_reference_p a, data_reference_p b){
++    unsigned int i;
++
++    /* The references are exactly the same.  */
++    if (operand_equal_p (DR_REF (a), DR_REF (b), 0)){
++        return true;
++    }
++
++    if (!same_data_refs_base_objects (a, b)){
++        return false;
++    }
++
++    for (i = 0; i < DR_NUM_DIMENSIONS (a); i++){
++        if (!are_equivalent_functions (DR_ACCESS_FN (a, i), DR_ACCESS_FN (b, i))){
++            return false;
++        }
++    }
++
++    return true;
 +}
 +
 +/* Returns true if loops are independent. */
 +
 +static bool
 +are_independent (struct loop *loop_a, struct loop *loop_b){
-+  VEC (data_reference_p, heap) *datarefs_a = VEC_alloc (data_reference_p, heap, 10);
-+  VEC (data_reference_p, heap) *datarefs_b = VEC_alloc (data_reference_p, heap, 10);
++    VEC (data_reference_p, heap) *datarefs_a = VEC_alloc (data_reference_p, heap, 10);
++    VEC (data_reference_p, heap) *datarefs_b = VEC_alloc (data_reference_p, heap, 10);
 +
-+  VEC (ddr_p, heap) *dependence_relations_a = VEC_alloc (ddr_p, heap, 10 * 10);
-+  VEC (ddr_p, heap) *dependence_relations_b = VEC_alloc (ddr_p, heap, 10 * 10);
-+  
-+  VEC (loop_p, heap) *loop_nest_a = VEC_alloc (loop_p, heap, 3);
-+  VEC (loop_p, heap) *loop_nest_b = VEC_alloc (loop_p, heap, 3);
++    VEC (ddr_p, heap) *dependence_relations_a = VEC_alloc (ddr_p, heap, 10 * 10);
++    VEC (ddr_p, heap) *dependence_relations_b = VEC_alloc (ddr_p, heap, 10 * 10);
 +
-+  compute_data_dependences_for_loop (loop_a, true, &loop_nest_a, &datarefs_a, &dependence_relations_a); 
-+  compute_data_dependences_for_loop (loop_b, true, &loop_nest_b, &datarefs_b, &dependence_relations_b);
-+  
-+  if (dump_file && (dump_flags & TDF_DETAILS)){
-+      data_reference_p dataref_a;
-+      data_reference_p dataref_b;
-+      unsigned int i;
++    VEC (loop_p, heap) *loop_nest_a = VEC_alloc (loop_p, heap, 3);
++    VEC (loop_p, heap) *loop_nest_b = VEC_alloc (loop_p, heap, 3);
 +
-+      fprintf (dump_file, "dumping data references of a \n");
-+      FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, i, dataref_a){
-+          dump_data_reference(dump_file, dataref_a);
-+      }
-+      
-+      fprintf (dump_file, "dumping data references of b \n");
-+      FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_b){
-+          dump_data_reference(dump_file, dataref_b);
-+      }
-+  }
-+      
-+  data_reference_p dataref_first;
-+  data_reference_p dataref_second;
-+  unsigned int i;
-+  unsigned int j;
-+      
-+  //If no dependences are found later, the loops are not dependent
-+  bool ret = true;
++    compute_data_dependences_for_loop (loop_a, true, &loop_nest_a, &datarefs_a, &dependence_relations_a); 
++    compute_data_dependences_for_loop (loop_b, true, &loop_nest_b, &datarefs_b, &dependence_relations_b);
 +
-+  //Consider each pair of dependences between the loops
-+  FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_first){
-+      FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, j, dataref_second){
++    if (dump_file && (dump_flags & TDF_DETAILS)){
++        data_reference_p dataref_a;
++        data_reference_p dataref_b;
++        unsigned int i;
 +
-+          if(same_data_refs_base_objects(dataref_first, dataref_second)){
-+              if(DR_IS_READ(dataref_first) && DR_IS_READ(dataref_second)){
-+                  print ("Found an input-dependence\n");
-+                  //Input reference can be ignored
-+              } else if(DR_IS_WRITE(dataref_first) && DR_IS_WRITE(dataref_second)){
-+                  print ("Found an output-dependence\n");
++        fprintf (dump_file, "dumping data references of a \n");
++        FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, i, dataref_a){
++            dump_data_reference(dump_file, dataref_a);
++        }
 +
-+                  if(!same_data_refs (dataref_first, dataref_second)){
-+                      print ("An output-dependence is blocking\n");
-+                      ret = false;
-+                  }
-+              } else if(DR_IS_READ(dataref_first) && DR_IS_WRITE(dataref_second)){
-+                  print ("Found an anti-dependence\n");
++        fprintf (dump_file, "dumping data references of b \n");
++        FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_b){
++            dump_data_reference(dump_file, dataref_b);
++        }
++    }
 +
-+                  if(!same_data_refs (dataref_first, dataref_second)){
-+                      print ("An anti-dependence is blocking\n");
-+                      ret = false;
-+                  }
-+              } else if(DR_IS_WRITE(dataref_first) && DR_IS_READ(dataref_second)){
-+                  print ("Found a true-dependence\n");
++    data_reference_p dataref_first;
++    data_reference_p dataref_second;
++    unsigned int i;
++    unsigned int j;
 +
-+                  if(!same_data_refs (dataref_first, dataref_second)){
-+                      print ("A true-dependence is blocking\n");
-+                      ret = false;
-+                  }
-+              }
-+          }
-+      }
-+  }
++    //If no dependences are found later, the loops are not dependent
++    bool ret = true;
 +
-+  free_dependence_relations (dependence_relations_a);
-+  free_dependence_relations (dependence_relations_b);
-+  
-+  free_data_refs (datarefs_a);
-+  free_data_refs (datarefs_b);
-+  
-+  VEC_free (loop_p, heap, loop_nest_a);
-+  VEC_free (loop_p, heap, loop_nest_b);
++    //Consider each pair of dependences between the loops
++    FOR_EACH_VEC_ELT(data_reference_p, datarefs_b, i, dataref_first){
++        FOR_EACH_VEC_ELT(data_reference_p, datarefs_a, j, dataref_second){
 +
-+  return ret;
++            if(same_data_refs_base_objects(dataref_first, dataref_second)){
++                if(DR_IS_READ(dataref_first) && DR_IS_READ(dataref_second)){
++                    print ("Found an input-dependence\n");
++                    //Input reference can be ignored
++                } else if(DR_IS_WRITE(dataref_first) && DR_IS_WRITE(dataref_second)){
++                    print ("Found an output-dependence\n");
++
++                    if(!are_equivalent (dataref_first, dataref_second)){
++                        print ("An output-dependence is blocking\n");
++                        ret = false;
++                    }
++                } else if(DR_IS_READ(dataref_first) && DR_IS_WRITE(dataref_second)){
++                    print ("Found an anti-dependence\n");
++
++                    if(!are_equivalent (dataref_first, dataref_second)){
++                        print ("An anti-dependence is blocking\n");
++                        ret = false;
++                    }
++                } else if(DR_IS_WRITE(dataref_first) && DR_IS_READ(dataref_second)){
++                    print ("Found a true-dependence\n");
++
++                    if(!are_equivalent (dataref_first, dataref_second)){
++                        print ("A true-dependence is blocking\n");
++                        ret = false;
++                    }
++                }
++            }
++        }
++    }
++
++    free_dependence_relations (dependence_relations_a);
++    free_dependence_relations (dependence_relations_b);
++
++    free_data_refs (datarefs_a);
++    free_data_refs (datarefs_b);
++
++    VEC_free (loop_p, heap, loop_nest_a);
++    VEC_free (loop_p, heap, loop_nest_b);
++
++    return ret;
 +}
 +
 +/* Verify if this loop is supported by the merging algorithm */
@@ -861,7 +665,7 @@ Index: tree-loop-fusion.c
 +
 +                continue;
 +            }
-+                
++
 +            if (dump_file && (dump_flags & TDF_DETAILS)){
 +                fprintf (dump_file, "Consider Loops %d and %d as candidates\n", loop->num, next->num);
 +            }
@@ -907,28 +711,6 @@ Index: tree-loop-fusion.c
 +    //Add events for this pass 
 +    statistics_counter_event (cfun, "Loop Fused", fusion_stats.fused);
 +    statistics_counter_event (cfun, "Basic Blocks Merged", fusion_stats.merged);
-+
-+    /* struct graph *original_graph_1 = new_graph (num_loops);
-+       original_graph_1 = create_original_graph (num_loops);
-+       dump_graph (dump_file, original_graph_1);
-+       dump_graph (stderr, original_graph_1);
-+       fprintf (dump_file, "printed the original_graph\n\n"); 
-+       fprintf (stderr, "printed the original_graph\n\n");
-+       struct graph *component_graph_parallel = create_component_graph ('P', num_loops);
-+       dump_graph (dump_file, component_graph_parallel);
-+       dump_graph (stderr, component_graph_parallel);
-+       fprintf (dump_file, "printed the component parallel graph\n\n"); 
-+       fprintf (stderr, "printed the component parallel graph\n\n");
-+       dump_graph (dump_file, original_graph_1);
-+       dump_graph (stderr, original_graph_1);
-+       fprintf (dump_file, "printed the original_graph\n\n"); 
-+       fprintf (stderr, "printed the original_graph\n\n");
-+       do_partitions (component_graph_parallel);
-+       dump_graph (dump_file, component_graph_parallel);
-+       dump_graph (stderr, component_graph_parallel);
-+       fprintf (dump_file, "printed the partitioned component parallel graph\n"); 
-+       fprintf (stderr, "printed the partitioned component parallel graph\n");
-+       fuse_according_to_graph (component_graph_parallel);*/
 +
 +    return 0;
 +}
