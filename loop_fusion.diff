@@ -1,7 +1,7 @@
-Index: doc/invoke.texi
+Index: gcc/doc/invoke.texi
 ===================================================================
---- doc/invoke.texi	(revision 192214)
-+++ doc/invoke.texi	(working copy)
+--- gcc/doc/invoke.texi	(revision 192214)
++++ gcc/doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
  -ftree-loop-if-convert-stores -ftree-loop-im @gol
@@ -20,10 +20,10 @@ Index: doc/invoke.texi
  @item -ftree-loop-distribution
  Perform loop distribution.  This flag can improve cache performance on
  big loop bodies and allow further loop optimizations, like
-Index: tree-pass.h
+Index: gcc/tree-pass.h
 ===================================================================
---- tree-pass.h	(revision 192214)
-+++ tree-pass.h	(working copy)
+--- gcc/tree-pass.h	(revision 192214)
++++ gcc/tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
  extern struct gimple_opt_pass pass_graphite_transforms;
@@ -32,11 +32,13 @@ Index: tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
-Index: tree-loop-fusion.c
+Index: gcc/tree-loop-fusion.c
 ===================================================================
---- tree-loop-fusion.c	(revision 0)
-+++ tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,696 @@
+--- gcc/tree-loop-fusion.c	(revision 0)
++++ gcc/tree-loop-fusion.c	(revision 0)
+@@ -0,0 +1,812 @@
++#include <iostream> //TODO Should be removed after dev
++
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -65,8 +67,10 @@ Index: tree-loop-fusion.c
 +/* Print a debug message if logging is enabled */
 +
 +static inline void
-+print (const char* message){
-+    if (dump_file && (dump_flags & TDF_DETAILS)){
++print (const char* message)
++{
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
 +        fprintf (dump_file, message);
 +    }
 +}
@@ -77,8 +81,10 @@ Index: tree-loop-fusion.c
 + */
 +
 +static inline void 
-+full_debug(const char* state){
-+    if (dump_file && (dump_flags & TDF_DETAILS)){
++full_debug(const char* state)
++{
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
 +        fprintf (dump_file, state);
 +        dump_function_to_file(current_function_decl, dump_file, dump_flags);
 +    }
@@ -87,7 +93,8 @@ Index: tree-loop-fusion.c
 +/* Return the last BB (last in the instruction stream) */
 +
 +static basic_block 
-+get_last_bb(struct loop *loop){
++get_last_bb(struct loop *loop)
++{
 +    basic_block header = loop->header;
 +    basic_block latch = loop->latch;
 +
@@ -121,7 +128,8 @@ Index: tree-loop-fusion.c
 +/* Return the number of basic blocks between the two loops */
 +
 +static unsigned int
-+distance_between_loops (struct loop *loop_first, struct loop *loop_next){
++distance_between_loops (struct loop *loop_first, struct loop *loop_next)
++{
 +    //Some loops appears to have their latch first, so taking latch and header
 +    //is not enough to determine the distance
 +    basic_block current = get_last_bb (loop_first);
@@ -129,7 +137,8 @@ Index: tree-loop-fusion.c
 +
 +    unsigned int distance = 0;
 +
-+    while(current->next_bb != header_next){
++    while(current->next_bb != header_next)
++    {
 +        ++distance;
 +        current = current->next_bb;
 +    }
@@ -143,7 +152,8 @@ Index: tree-loop-fusion.c
 + */
 +
 +static basic_block
-+basic_block_between (struct loop *loop_first, struct loop* loop_next){
++basic_block_between (struct loop *loop_first, struct loop* loop_next)
++{
 +    //Some loops appears to have their latch first, so taking latch and header
 +    //is not enough to determine the distance
 +    basic_block last_bb = get_last_bb (loop_first);
@@ -158,19 +168,25 @@ Index: tree-loop-fusion.c
 +/* Return the induction variable SSA name for this loop */
 +
 +static tree 
-+get_ssa_name_iv(struct loop* loop){
++get_ssa_name_iv(struct loop* loop)
++{
 +    tree ssa_iv_name = NULL_TREE;
 +
-+    for(gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
++    for(gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    {
 +        gimple stmt = gsi_stmt (gsi);
 +
-+        if (gimple_code(stmt) == GIMPLE_COND){
++        if (gimple_code(stmt) == GIMPLE_COND)
++        {
 +            tree lhs = gimple_cond_lhs(stmt);
 +            tree rhs = gimple_cond_rhs(stmt);
 +
-+            if(TREE_CODE(lhs) == SSA_NAME){
++            if(TREE_CODE(lhs) == SSA_NAME)
++            {
 +                ssa_iv_name = lhs;
-+            } else if(TREE_CODE(rhs) == SSA_NAME){
++            }
++            else if(TREE_CODE(rhs) == SSA_NAME)
++            {
 +                ssa_iv_name = rhs;
 +            } 
 +        }
@@ -184,13 +200,16 @@ Index: tree-loop-fusion.c
 +/* Return the PHI LHS for the given SSA name in the given loop */
 +
 +static tree 
-+get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name){
++get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name)
++{
 +    tree def = NULL_TREE;
 +    
-+    for(gimple_stmt_iterator gsi = gsi_start_phis (loop->header); !gsi_end_p (gsi); gsi_next (&gsi)){
++    for(gimple_stmt_iterator gsi = gsi_start_phis (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    {
 +        gimple phi = gsi_stmt (gsi);
 +        
-+        if(SSA_NAME_VAR(gimple_phi_result(phi)) == SSA_NAME_VAR(ssa_iv_name)){
++        if(SSA_NAME_VAR(gimple_phi_result(phi)) == SSA_NAME_VAR(ssa_iv_name))
++        {
 +            def = gimple_phi_result(phi);
 +            break;
 +        }
@@ -204,12 +223,15 @@ Index: tree-loop-fusion.c
 +/* 
 + * This function fuses two loops together 
 + *
-+ * The two functions have to be mergeable and mergeable together before this function is called. 
++ * The two functions have to be mergeable and mergeable together 
++ * before this function is called. 
 + */
 +
 +static void
-+fuse_loops (struct loop* loop_first, struct loop* loop_next){
-+    if (dump_file && (dump_flags & TDF_DETAILS)){
++fuse_loops (struct loop* loop_first, struct loop* loop_next)
++{
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
 +        fprintf (dump_file, "Fusion of A=%d and B=%d\n", loop_first->num, loop_next->num);
 +        full_debug ("Before fusion\n");
 +    }
@@ -234,14 +256,17 @@ Index: tree-loop-fusion.c
 +    edge new_entry_edge = loop_preheader_edge (loop_first);
 +    edge new_latch_edge = loop_latch_edge (loop_first);
 +    
-+    for(gimple_stmt_iterator gsi = gsi_start_phis (loop_next->header); !gsi_end_p (gsi); ){
++    for(gimple_stmt_iterator gsi = gsi_start_phis (loop_next->header); 
++            !gsi_end_p (gsi); )
++    {
 +        gimple phi_orig = gsi_stmt (gsi);
++        tree result = gimple_phi_result( phi_orig);
 +        
-+        if(SSA_NAME_VAR(gimple_phi_result(phi_orig)) != SSA_NAME_VAR(ssa_iv_name_next)){
++        if(SSA_NAME_VAR (result) != SSA_NAME_VAR (ssa_iv_name_next))
++        {
 +            print ("Found a PHI node to copy \n");
 +
-+            tree res = gimple_phi_result(phi_orig);
-+            gimple phi_new = create_phi_node(res, loop_first->header);
++            gimple phi_new = create_phi_node (result, loop_first->header);
 +        
 +            tree def;
 +            source_location locus;
@@ -258,7 +283,9 @@ Index: tree-loop-fusion.c
 +
 +            //We do not want the SSA name to be released
 +            remove_phi_node (&gsi, false);
-+        } else {
++        } 
++        else 
++        {
 +            //The SSA name can be released
 +            remove_phi_node (&gsi, true);
 +        }
@@ -271,11 +298,13 @@ Index: tree-loop-fusion.c
 +    gimple_stmt_iterator gsi_first_last = gsi_last_bb (loop_first->header);
 +    gsi_prev (&gsi_first_last);
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop_next->header); !gsi_end_p (gsi);)
++    for (gimple_stmt_iterator gsi = gsi_start_bb (loop_next->header); 
++            !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt(gsi);
 +
-+        if (is_gimple_assign(stmt) && gimple_assign_rhs_code(stmt) != COND_EXPR && gimple_assign_rhs_code(stmt) != LABEL_EXPR)
++        if (is_gimple_assign(stmt) && gimple_assign_rhs_code(stmt) != COND_EXPR 
++                && gimple_assign_rhs_code(stmt) != LABEL_EXPR)
 +        {
 +            update_stmt (stmt);
 +            gsi_move_before (&gsi, &gsi_first_last);
@@ -337,26 +366,39 @@ Index: tree-loop-fusion.c
 +    /* 7. Clean the basic blocks */
 +
 +    //Remove the between block if possible
-+    if(gimple_seq_empty_p (phi_nodes (between_bb)) && gimple_seq_empty_p (bb_seq (between_bb))){
++    if(gimple_seq_empty_p (phi_nodes (between_bb)) 
++            && gimple_seq_empty_p (bb_seq (between_bb)))
++    {
 +        redirect_edge_and_branch (EDGE_SUCC (loop_first->header, 1), header_next);
 +
 +        delete_basic_block (between_bb);
-+    } else {
-+        set_immediate_dominator (CDI_DOMINATORS, between_bb, recompute_dominator (CDI_DOMINATORS, between_bb));
++    } 
++    else 
++    {
++        set_immediate_dominator (CDI_DOMINATORS, between_bb, 
++                recompute_dominator (CDI_DOMINATORS, between_bb));
 +    }
 +    
-+    full_debug("After cleaning basic blocks\n");
++    full_debug ("After cleaning basic blocks\n");
 +
 +    /* 7. Update SSA */
 +
-+    update_ssa(TODO_update_ssa);
++    update_ssa (TODO_update_ssa);
 +
 +    /* 8. Update dominators */
 +    
-+    set_immediate_dominator (CDI_DOMINATORS, loop_first->header, recompute_dominator (CDI_DOMINATORS, loop_first->header));
-+    set_immediate_dominator (CDI_DOMINATORS, loop_first->latch, recompute_dominator (CDI_DOMINATORS, loop_first->latch));
-+    set_immediate_dominator (CDI_DOMINATORS, next_bb, recompute_dominator (CDI_DOMINATORS, next_bb));
-+    set_immediate_dominator (CDI_DOMINATORS, header_next, recompute_dominator (CDI_DOMINATORS, header_next));
++    set_immediate_dominator (CDI_DOMINATORS, loop_first->header, 
++            recompute_dominator (CDI_DOMINATORS, loop_first->header));
++    set_immediate_dominator (CDI_DOMINATORS, loop_first->latch, 
++            recompute_dominator (CDI_DOMINATORS, loop_first->latch));
++    set_immediate_dominator (CDI_DOMINATORS, next_bb, 
++            recompute_dominator (CDI_DOMINATORS, next_bb));
++    set_immediate_dominator (CDI_DOMINATORS, header_next, 
++            recompute_dominator (CDI_DOMINATORS, header_next));
++
++    /* 9. Fix the profile information */
++
++    //TODO Restore the profile information
 +    
 +    full_debug("After fusion\n");
 +
@@ -366,8 +408,10 @@ Index: tree-loop-fusion.c
 +/* Indicates if the specified basic block can be merged */
 +
 +static bool
-+dirty(basic_block bb){
-+    if(gimple_seq_empty_p (bb_seq (bb)) && gimple_seq_empty_p (phi_nodes (bb))){
++dirty(basic_block bb)
++{
++    if(gimple_seq_empty_p (bb_seq (bb)) && gimple_seq_empty_p (phi_nodes (bb)))
++    {
 +        return single_succ_p (bb) && single_pred_p (bb);
 +    }
 +
@@ -377,16 +421,21 @@ Index: tree-loop-fusion.c
 +/* Tries to find basic blocks to be merged */
 +
 +static void
-+cleanup(){
++cleanup()
++{
 +    basic_block bb;
 +    
-+    FOR_EACH_BB(bb){
-+        if(dirty(bb)){
++    FOR_EACH_BB(bb)
++    {
++        if(dirty(bb))
++        {
 +            basic_block bb_next = bb->next_bb;
 +
-+            if(bb_next && dirty (bb_next)){
++            if(bb_next && dirty (bb_next))
++            {
 +                //They have to fall through the instruction stream
-+                if(single_succ_edge (bb)->dest == bb_next){
++                if(single_succ_edge (bb)->dest == bb_next)
++                {
 +                    merge_blocks(bb, bb_next);
 +                    
 +                    ++fusion_stats.merged;
@@ -396,19 +445,27 @@ Index: tree-loop-fusion.c
 +    }
 +}
 +
-+/* Returns true if the access functions are equivalent, the induction variable may vary. */
++/* 
++ * Returns true if the access functions are equivalent, 
++ * the induction variable may vary. 
++ */
 +
 +static bool
-+are_equivalent_functions (const_tree chrec0, const_tree chrec1){
-+    if (chrec0 == NULL_TREE || chrec1 == NULL_TREE || TREE_CODE (chrec0) != TREE_CODE (chrec1)){
++are_equivalent_functions (const_tree chrec0, const_tree chrec1)
++{
++    if (chrec0 == NULL_TREE || chrec1 == NULL_TREE 
++            || TREE_CODE (chrec0) != TREE_CODE (chrec1))
++    {
 +        return false;
 +    }
 +
-+    if (chrec0 == chrec1){
++    if (chrec0 == chrec1)
++    {
 +        return true;
 +    }
 +
-+    switch (TREE_CODE (chrec0)){
++    switch (TREE_CODE (chrec0))
++    {
 +        case INTEGER_CST:
 +            return operand_equal_p (chrec0, chrec1, 0);
 +
@@ -428,28 +485,36 @@ Index: tree-loop-fusion.c
 +    }
 +}
 +
-+/* Returns true if both data references have equivalent access function, the induction variable may change. */
++/* 
++ * Returns true if both data references have equivalent access function, 
++ * the induction variable may change. 
++ */
 +
 +static inline bool
-+are_equivalent (data_reference_p a, data_reference_p b){
++are_equivalent (data_reference_p a, data_reference_p b)
++{
 +    unsigned int i;
 +
 +    /* The references are exactly the same.  */
-+    if (operand_equal_p (DR_REF (a), DR_REF (b), 0)){
++    if (operand_equal_p (DR_REF (a), DR_REF (b), 0))
++    {
 +        return true;
 +    }
 +
-+    if (!same_data_refs_base_objects (a, b)){
++    if (!same_data_refs_base_objects (a, b))
++    {
 +        return false;
 +    }
 +
-+    for (i = 0; i < DR_NUM_DIMENSIONS (a); i++){
-+        if (!are_equivalent_functions (DR_ACCESS_FN (a, i), DR_ACCESS_FN (b, i))){
++    for (i = 0; i < DR_NUM_DIMENSIONS (a); i++)
++    {
++        if (!are_equivalent_functions (DR_ACCESS_FN (a, i), DR_ACCESS_FN (b, i)))
++        {
 +            return false;
 +        }
 +    }
 +
-+    //TODO Could be safer to verify the var of each data reference is the induction variable
++    //TODO Verify the var of each data reference is the induction variable
 +
 +    return true;
 +}
@@ -457,21 +522,28 @@ Index: tree-loop-fusion.c
 +/* Returns true if loops are independent. */
 +
 +static bool
-+are_independent (struct loop *loop_first, struct loop *loop_next){
-+    VEC (data_reference_p, heap) *datarefs_next = VEC_alloc (data_reference_p, heap, 10);
-+    VEC (data_reference_p, heap) *datarefs_first = VEC_alloc (data_reference_p, heap, 10);
++are_independent (struct loop *loop_first, struct loop *loop_next)
++{
++    VEC (data_reference_p, heap) *datarefs_next = 
++        VEC_alloc (data_reference_p, heap, 10);
++    VEC (data_reference_p, heap) *datarefs_first = 
++        VEC_alloc (data_reference_p, heap, 10);
 +
-+    VEC (ddr_p, heap) *dependence_relations_next = VEC_alloc (ddr_p, heap, 10 * 10);
-+    VEC (ddr_p, heap) *dependence_relations_first = VEC_alloc (ddr_p, heap, 10 * 10);
++    VEC (ddr_p, heap) *dependence_relations_next = 
++        VEC_alloc (ddr_p, heap, 10 * 10);
++    VEC (ddr_p, heap) *dependence_relations_first = 
++        VEC_alloc (ddr_p, heap, 10 * 10);
 +
 +    VEC (loop_p, heap) *loop_nest_next = VEC_alloc (loop_p, heap, 3);
 +    VEC (loop_p, heap) *loop_nest_first = VEC_alloc (loop_p, heap, 3);
 +
-+    compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, &datarefs_next, &dependence_relations_next); 
-+    compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, &datarefs_first, &dependence_relations_first);
++    compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
++            &datarefs_next, &dependence_relations_next); 
++    compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, 
++            &datarefs_first, &dependence_relations_first);
 +
-+    data_reference_p dataref_first;
-+    data_reference_p dataref_second;
++    data_reference_p ref_first;
++    data_reference_p ref_second;
 +    unsigned int i;
 +    unsigned int j;
 +
@@ -479,31 +551,43 @@ Index: tree-loop-fusion.c
 +    bool ret = true;
 +
 +    //Consider each pair of dependences between the loops
-+    FOR_EACH_VEC_ELT(data_reference_p, datarefs_first, i, dataref_first){
-+        FOR_EACH_VEC_ELT(data_reference_p, datarefs_next, j, dataref_second){
-+
-+            if(same_data_refs_base_objects(dataref_first, dataref_second)){
-+                if(DR_IS_READ(dataref_first) && DR_IS_READ(dataref_second)){
++    FOR_EACH_VEC_ELT(data_reference_p, datarefs_first, i, ref_first)
++    {
++        FOR_EACH_VEC_ELT(data_reference_p, datarefs_next, j, ref_second)
++        {
++            if(same_data_refs_base_objects(ref_first, ref_second))
++            {
++                if(DR_IS_READ(ref_first) && DR_IS_READ(ref_second))
++                {
 +                    print ("Found an input-dependence\n");
 +                    //Input reference can be ignored
-+                } else if(DR_IS_WRITE(dataref_first) && DR_IS_WRITE(dataref_second)){
++                } 
++                else if(DR_IS_WRITE(ref_first) && DR_IS_WRITE(ref_second))
++                {
 +                    print ("Found an output-dependence\n");
 +
-+                    if(!are_equivalent (dataref_first, dataref_second)){
++                    if(!are_equivalent (ref_first, ref_second))
++                    {
 +                        print ("An output-dependence is blocking\n");
 +                        ret = false;
 +                    }
-+                } else if(DR_IS_READ(dataref_first) && DR_IS_WRITE(dataref_second)){
++                } 
++                else if(DR_IS_READ(ref_first) && DR_IS_WRITE(ref_second))
++                {
 +                    print ("Found an anti-dependence\n");
 +
-+                    if(!are_equivalent (dataref_first, dataref_second)){
++                    if(!are_equivalent (ref_first, ref_second))
++                    {
 +                        print ("An anti-dependence is blocking\n");
 +                        ret = false;
 +                    }
-+                } else if(DR_IS_WRITE(dataref_first) && DR_IS_READ(dataref_second)){
++                } 
++                else if(DR_IS_WRITE(ref_first) && DR_IS_READ(ref_second))
++                {
 +                    print ("Found a true-dependence\n");
 +
-+                    if(!are_equivalent (dataref_first, dataref_second)){
++                    if(!are_equivalent (ref_first, ref_second))
++                    {
 +                        print ("A true-dependence is blocking\n");
 +                        ret = false;
 +                    }
@@ -527,24 +611,29 @@ Index: tree-loop-fusion.c
 +/* Verify if this loop is supported by the merging algorithm */
 +
 +static bool 
-+loop_is_mergeable(struct loop* loop){
++loop_is_mergeable(struct loop* loop)
++{
 +    //The algorithm will fail on loop with more than one exit
-+    if (!single_exit(loop)){
++    if (!single_exit(loop))
++    {
 +        return false; 
 +    }
 +
 +    //It is necessary to know the number of times a loop will iterate
-+    if(!loop->any_estimate || !loop->any_upper_bound){
++    if(!loop->any_estimate || !loop->any_upper_bound)
++    {
 +        return false;
 +    }
 +    
 +    //It is necessary to have a precise estimate
-+    if(loop->nb_iterations_estimate != loop->nb_iterations_upper_bound){
++    if(loop->nb_iterations_estimate != loop->nb_iterations_upper_bound)
++    {
 +        return false;
 +    }
 +     
 +    //The algorithm only supports loops with a header and a latch
-+    if (loop->num_nodes > 2){
++    if (loop->num_nodes > 2)
++    {
 +        return false;
 +    }
 +
@@ -554,18 +643,19 @@ Index: tree-loop-fusion.c
 +/* Return true if the loops can be fused. Both loops have to be mergeable. */
 +
 +static bool
-+loops_are_mergeable(struct loop *loop_first, struct loop *loop_next){
++loops_are_mergeable (struct loop *loop_first, struct loop *loop_next)
++{
 +    //Both loop should iterate the same number of times
-+    if(loop_next->nb_iterations_estimate != loop_first->nb_iterations_estimate){
++    if(loop_next->nb_iterations_estimate != loop_first->nb_iterations_estimate)
++    {
 +        return false;
 +    }
 +
 +    //Only support loops with only one basic block between them
 +    unsigned int distance = distance_between_loops (loop_first, loop_next);
-+    if(distance != 1){
-+        if (dump_file && (dump_flags & TDF_DETAILS)){
-+            fprintf (dump_file, "The distance is too high (distance=%d)\n", distance);
-+        }
++    if(distance != 1)
++    {
++        print ("The distance is too high\n");
 +
 +        return false;
 +    }
@@ -573,34 +663,42 @@ Index: tree-loop-fusion.c
 +    basic_block between_bb = basic_block_between (loop_first, loop_next);
 +
 +    //The two loops must be always executed together
-+    if(!single_succ_p (between_bb) || !single_pred_p (between_bb)){
++    if(!single_succ_p (between_bb) || !single_pred_p (between_bb))
++    {
 +        print ("The between block has too many predecessors or successors\n");
 +
 +        return false;
 +    }
 +
 +    //Only empty block between A and B are supported
-+    if(!gimple_seq_empty_p( bb_seq( between_bb))){
++    if(!gimple_seq_empty_p( bb_seq( between_bb)))
++    {
 +        print ("Too many statements in the between block\n");
 +
 +        return false;
 +    }
 +
 +    //Only empty block between A and B are supported
-+    if(!gimple_seq_empty_p( phi_nodes( between_bb))){
++    if(!gimple_seq_empty_p( phi_nodes( between_bb)))
++    {
 +        print ("Too many PHI nodes in the between block\n");
 +
 +        return false;
 +    }
 +
-+    //If all the other conditions, the loops needs only to be independent to be fused
++    //If all the other conditions are, 
++    //the loops needs only to be independent to be fused
 +    return are_independent (loop_first, loop_next);
 +}
 +
-+/* Return true if the two loops are interesting to merge, otherwise return false.  */
++/* 
++ * Return true if the two loops are interesting to merge, 
++ * otherwise return false.
++ */
 +
 +static bool
-+loops_are_interesting_to_merge(struct loop *loop_first, struct loop *loop_next){
++loops_are_interesting_to_merge (struct loop * /*loop_first*/, struct loop * /*loop_next*/)
++{
 +    //TODO
 +    return true;
 +}
@@ -611,17 +709,19 @@ Index: tree-loop-fusion.c
 +tree_loop_fusion (void)
 +{
 +    //If there are no loops, no need to go farther
-+    if (!current_loops){
++    if (!current_loops)
++    {
 +        return 0;
 +    }
-+    
++
 +    //Initialize the stats
 +    memset (&fusion_stats, 0, sizeof (fusion_stats));
 +   
-+    if (dump_file && (dump_flags & TDF_DETAILS)){
-+        fprintf (dump_file, "Start loop fusion pass (%d loops)\n", number_of_loops());
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
++        fprintf (dump_file, "Start loop fusion pass\n");
 +
-+        flow_loops_dump(dump_file, NULL, 10);
++        flow_loops_dump (dump_file, NULL, 10);
 +    }
 +
 +    struct loop *loop_first;
@@ -631,9 +731,12 @@ Index: tree-loop-fusion.c
 +    FOR_EACH_LOOP (li, loop_first, LI_ONLY_INNERMOST)
 +    {
 +        //The algorithm cannot merge all loops
-+        if(!loop_is_mergeable(loop_first)){
-+            if (dump_file && (dump_flags & TDF_DETAILS)){
-+                fprintf (dump_file, "Loop %d cannot be merged\n", loop_first->num);
++        if(!loop_is_mergeable(loop_first))
++        {
++            if (dump_file && (dump_flags & TDF_DETAILS))
++            {
++                fprintf (dump_file, "Loop %d cannot be merged\n", 
++                        loop_first->num);
 +            }
 +
 +            continue;
@@ -647,9 +750,12 @@ Index: tree-loop-fusion.c
 +            gcc_assert(loop_outer(loop_first) == loop_outer(loop_next));
 +
 +            //The algorithm cannot merge all loops
-+            if(!loop_is_mergeable(loop_next)){
-+                if (dump_file && (dump_flags & TDF_DETAILS)){
-+                    fprintf (dump_file, "Loop %d cannot be merged\n", loop_next->num);
++            if(!loop_is_mergeable(loop_next))
++            {
++                if (dump_file && (dump_flags & TDF_DETAILS))
++                {
++                    fprintf (dump_file, "Loop %d cannot be merged\n", 
++                            loop_next->num);
 +                }
 +
 +                continue;
@@ -660,31 +766,39 @@ Index: tree-loop-fusion.c
 +            loop_next = loop_first;
 +            loop_first = tmp;
 +
-+            if (dump_file && (dump_flags & TDF_DETAILS)){
-+                fprintf (dump_file, "Consider Loops %d and %d as candidates\n", loop_first->num, loop_next->num);
++            if (dump_file && (dump_flags & TDF_DETAILS))
++            {
++                fprintf (dump_file, "Consider Loops %d and %d as candidates\n", 
++                        loop_first->num, loop_next->num);
 +            }
 +
 +            //Verify that the loops can be merged together
-+            if(!loops_are_mergeable (loop_first, loop_next)){
-+                if (dump_file && (dump_flags & TDF_DETAILS)){
-+                    fprintf (dump_file, "Loops %d and %d cannot be merged\n", loop_first->num, loop_next->num);
++            if(!loops_are_mergeable (loop_first, loop_next))
++            {
++                if (dump_file && (dump_flags & TDF_DETAILS))
++                {
++                    fprintf (dump_file, "Loops %d and %d cannot be merged\n", 
++                            loop_first->num, loop_next->num);
 +                }
 +
 +                continue;
 +            }
 +                
 +            //Finally, if they are interesting to merge, merge them
-+            if(loops_are_interesting_to_merge (loop_first, loop_next)){
++            if(loops_are_interesting_to_merge (loop_first, loop_next))
++            {
 +                fuse_loops (loop_first, loop_next);
 +
-+                //The cleanup remove empty basic blocks to make further loop fusion possible
++                //The cleanup remove empty basic blocks 
++                //to make further loop fusion possible
 +                cleanup();
 +            }
 +        }
 +    }
 +    
 +    //Update and verify the function is loops were fused
-+    if(fusion_stats.fused > 0){
++    if(fusion_stats.fused > 0)
++    {
 +        //The merging strategy does not take virtual operands into account
 +        mark_virtual_operands_for_renaming (cfun);
 +
@@ -692,13 +806,13 @@ Index: tree-loop-fusion.c
 +        rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
 +
 +        //Update if necessary
-+        update_ssa(TODO_update_ssa);
++        update_ssa (TODO_update_ssa);
 +
 +        //Activate verification of the whole function
 +        #ifdef ENABLE_CHECKING
-+            verify_loop_structure();
-+            verify_gimple_in_cfg(cfun);
-+            verify_ssa(true);
++            verify_loop_structure ();
++            verify_gimple_in_cfg (cfun);
++            verify_ssa (true);
 +        #endif
 +    }
 +  
@@ -730,13 +844,15 @@ Index: tree-loop-fusion.c
 +        0,                              /* properties_provided */
 +        0,                              /* properties_destroyed */
 +        0,                              /* todo_flags_start */
-+        TODO_update_ssa | TODO_verify_ssa,   /* todo_flags_finish */
++        TODO_update_ssa                 /* todo_flags_finish */ 
++      | TODO_verify_ssa
++      /*| TODO_rebuild_frequencies*/,   
 +    }
 +};
-Index: timevar.def
+Index: gcc/timevar.def
 ===================================================================
---- timevar.def	(revision 192214)
-+++ timevar.def	(working copy)
+--- gcc/timevar.def	(revision 192214)
++++ gcc/timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
@@ -745,10 +861,10 @@ Index: timevar.def
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
-Index: common.opt
+Index: gcc/common.opt
 ===================================================================
---- common.opt	(revision 192214)
-+++ common.opt	(working copy)
+--- gcc/common.opt	(revision 192214)
++++ gcc/common.opt	(working copy)
 @@ -2050,6 +2050,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
  Enable string length optimizations on trees
@@ -760,10 +876,10 @@ Index: common.opt
  ftree-loop-distribution
  Common Report Var(flag_tree_loop_distribution) Optimization
  Enable loop distribution on trees
-Index: Makefile.in
+Index: gcc/Makefile.in
 ===================================================================
---- Makefile.in	(revision 192214)
-+++ Makefile.in	(working copy)
+--- gcc/Makefile.in	(revision 192214)
++++ gcc/Makefile.in	(working copy)
 @@ -1356,6 +1356,7 @@
  	tree-inline.o \
  	tree-into-ssa.o \
@@ -784,10 +900,10 @@ Index: Makefile.in
  tree-loop-distribution.o: tree-loop-distribution.c $(CONFIG_H) $(SYSTEM_H) \
     coretypes.h $(TREE_FLOW_H) $(CFGLOOP_H) $(TREE_DATA_REF_H) $(TREE_PASS_H)
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
-Index: passes.c
+Index: gcc/passes.c
 ===================================================================
---- passes.c	(revision 192214)
-+++ passes.c	(working copy)
+--- gcc/passes.c	(revision 192214)
++++ gcc/passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
  	  NEXT_PASS (pass_record_bounds);
