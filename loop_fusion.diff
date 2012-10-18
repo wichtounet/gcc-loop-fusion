@@ -209,7 +209,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,889 @@
+@@ -0,0 +1,930 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -741,14 +741,51 @@ Index: gcc/tree-loop-fusion.c
 +    unsigned int i;
 +    unsigned int j;
 +
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
++        fprintf (dump_file, "Print data reference of A\n");
++        FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
++        {
++            if(!ref_first || !DR_STMT (ref_first)){
++                fprintf (dump_file, "Null data reference\n");
++            } else {
++                dump_data_reference (dump_file, ref_first);
++            }
++        }
++        
++        fprintf (dump_file, "Print data reference of B\n");
++        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
++        {
++            if(!ref_second || !DR_STMT (ref_second)){
++                fprintf (dump_file, "Null data reference\n");
++            } else {
++                dump_data_reference (dump_file, ref_second);
++            }
++        }
++    }
++
 +    //If no dependences are found later, the loops are not dependent
 +    bool ret = true;
 +
 +    //Consider each pair of dependences between the loops
 +    FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
 +    {
++        //TODO Find what to do with these "NULL" references
++        if(!ref_first || !DR_STMT(ref_first)){
++            print ("A and B are not independent due to unresolved dependences\n");
++            ret = false;
++            break;
++        }
++
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
 +        {
++            //TODO Find what to do with these "NULL" references
++            if(!ref_second || !DR_STMT(ref_second)){
++                print ("A and B are not independent due to unresolved dependences\n");
++                ret = false;
++                break;
++            }
++
 +            if (same_data_refs_base_objects (ref_first, ref_second))
 +            {
 +                if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
@@ -787,6 +824,10 @@ Index: gcc/tree-loop-fusion.c
 +                    }
 +                }
 +            }
++        }
++
++        if(!ret){
++            break;
 +        }
 +    }
 +
