@@ -173,7 +173,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,831 @@
+@@ -0,0 +1,862 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -764,6 +764,24 @@ Index: gcc/tree-loop-fusion.c
 +    return ret;
 +}
 +
++/* Return the index of the basic block in the instruction stream */
++
++static unsigned int
++bb_stream_index (basic_block block){
++    unsigned int index = 0;
++
++    basic_block bb;
++    FOR_EACH_BB(bb){
++        if(bb == block){
++            break;
++        }
++
++        ++index;
++    }
++
++    return index;
++}
++
 +/* Verify if this loop is supported by the merging algorithm */
 +
 +static bool 
@@ -790,6 +808,14 @@ Index: gcc/tree-loop-fusion.c
 +    //The algorithm only supports loops with a header and a latch
 +    if (loop->num_nodes > 2)
 +    {
++        return false;
++    }
++    
++    basic_block header = loop->header;
++    basic_block latch = loop->latch;
++
++    //The header and the latch should be sibling in the instruction stream
++    if(!(header->next_bb == latch || latch->next_bb == header)){
 +        return false;
 +    }
 +
@@ -917,10 +943,15 @@ Index: gcc/tree-loop-fusion.c
 +                continue;
 +            }
 +
-+            //TODO Check if the loops are always in this order
-+            struct loop* tmp = loop_next;
-+            loop_next = loop_first;
-+            loop_first = tmp;
++            unsigned int index_first = bb_stream_index (loop_first->header);
++            unsigned int index_next  = bb_stream_index (loop_next->header);
++
++            //Order them so that the first is before the next in the instruction stream
++            if(index_first > index_next){
++                struct loop* tmp = loop_next;
++                loop_next = loop_first;
++                loop_first = tmp;
++            }
 +
 +            if (dump_file && (dump_flags & TDF_DETAILS))
 +            {
@@ -1005,6 +1036,18 @@ Index: gcc/tree-loop-fusion.c
 +      /*| TODO_rebuild_frequencies*/,   
 +    }
 +};
+Index: gcc/opts.c
+===================================================================
+--- gcc/opts.c	(revision 192214)
++++ gcc/opts.c	(working copy)
+@@ -485,6 +485,7 @@
+     { OPT_LEVELS_2_PLUS, OPT_ftree_tail_merge, NULL, 1 },
+     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_foptimize_strlen, NULL, 1 },
+     { OPT_LEVELS_2_PLUS, OPT_fhoist_adjacent_loads, NULL, 1 },
++    { OPT_LEVELS_2_PLUS, OPT_ftree_loop_fusion, NULL, 1 },
+ 
+     /* -O3 optimizations.  */
+     { OPT_LEVELS_3_PLUS, OPT_ftree_loop_distribute_patterns, NULL, 1 },
 Index: gcc/timevar.def
 ===================================================================
 --- gcc/timevar.def	(revision 192214)
