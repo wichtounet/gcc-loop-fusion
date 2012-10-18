@@ -10,12 +10,14 @@ Index: gcc/doc/invoke.texi
  -ftree-loop-ivcanon -ftree-loop-linear -ftree-loop-optimize @gol
  -ftree-parallelize-loops=@var{n} -ftree-pre -ftree-partial-pre -ftree-pta @gol
  -ftree-reassoc -ftree-sink -ftree-slsr -ftree-sra @gol
-@@ -7534,6 +7535,9 @@
+@@ -7534,6 +7535,11 @@
  @end smallexample
  potentially producing data races.
  
 +@item -ftree-loop-fusion
-+Perform loop fusion.
++Perform loop fusion. This flag can improve cache performance on loops
++iterating through the same arrays.
++Enabled at level @option{-O2} and higher.
 +
  @item -ftree-loop-distribution
  Perform loop distribution.  This flag can improve cache performance on
