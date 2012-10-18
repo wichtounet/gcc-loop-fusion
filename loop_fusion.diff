@@ -266,7 +266,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,930 @@
+@@ -0,0 +1,929 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -554,8 +554,7 @@ Index: gcc/tree-loop-fusion.c
 +    {
 +        gimple stmt = gsi_stmt (gsi);
 +
-+        if (is_gimple_assign(stmt) && gimple_assign_rhs_code (stmt) != COND_EXPR 
-+                && gimple_assign_rhs_code (stmt) != LABEL_EXPR)
++        if (gimple_code(stmt) != GIMPLE_COND)
 +        {
 +            update_stmt (stmt);
 +            gsi_move_before (&gsi, &gsi_first_last);
