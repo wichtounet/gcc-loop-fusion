@@ -1,6 +1,6 @@
 Index: gcc/doc/invoke.texi
 ===================================================================
---- gcc/doc/invoke.texi	(revision 192214)
+--- gcc/doc/invoke.texi	(revision 192574)
 +++ gcc/doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
@@ -32,7 +32,7 @@ Index: gcc/doc/invoke.texi
  big loop bodies and allow further loop optimizations, like
 Index: gcc/tree-pass.h
 ===================================================================
---- gcc/tree-pass.h	(revision 192214)
+--- gcc/tree-pass.h	(revision 192574)
 +++ gcc/tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
@@ -1048,9 +1048,9 @@ Index: gcc/tree-loop-fusion.c
 +};
 Index: gcc/opts.c
 ===================================================================
---- gcc/opts.c	(revision 192214)
+--- gcc/opts.c	(revision 192574)
 +++ gcc/opts.c	(working copy)
-@@ -485,6 +485,7 @@
+@@ -487,6 +487,7 @@
      { OPT_LEVELS_2_PLUS, OPT_ftree_tail_merge, NULL, 1 },
      { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_foptimize_strlen, NULL, 1 },
      { OPT_LEVELS_2_PLUS, OPT_fhoist_adjacent_loads, NULL, 1 },
@@ -1060,7 +1060,7 @@ Index: gcc/opts.c
      { OPT_LEVELS_3_PLUS, OPT_ftree_loop_distribute_patterns, NULL, 1 },
 Index: gcc/timevar.def
 ===================================================================
---- gcc/timevar.def	(revision 192214)
+--- gcc/timevar.def	(revision 192574)
 +++ gcc/timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
@@ -1072,7 +1072,7 @@ Index: gcc/timevar.def
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
 Index: gcc/common.opt
 ===================================================================
---- gcc/common.opt	(revision 192214)
+--- gcc/common.opt	(revision 192574)
 +++ gcc/common.opt	(working copy)
 @@ -2050,6 +2050,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
@@ -1087,7 +1087,7 @@ Index: gcc/common.opt
  Enable loop distribution on trees
 Index: gcc/Makefile.in
 ===================================================================
---- gcc/Makefile.in	(revision 192214)
+--- gcc/Makefile.in	(revision 192574)
 +++ gcc/Makefile.in	(working copy)
 @@ -1356,6 +1356,7 @@
  	tree-inline.o \
@@ -1111,7 +1111,7 @@ Index: gcc/Makefile.in
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
 Index: gcc/passes.c
 ===================================================================
---- gcc/passes.c	(revision 192214)
+--- gcc/passes.c	(revision 192574)
 +++ gcc/passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
