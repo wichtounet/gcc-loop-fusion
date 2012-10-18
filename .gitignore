@@ -3,3 +3,4 @@ a.out
 *.lfusion
 *.s
 *.swp
+*.o
