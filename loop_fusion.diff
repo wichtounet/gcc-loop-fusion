@@ -10,7 +10,15 @@ Index: gcc/doc/invoke.texi
  -ftree-loop-ivcanon -ftree-loop-linear -ftree-loop-optimize @gol
  -ftree-parallelize-loops=@var{n} -ftree-pre -ftree-partial-pre -ftree-pta @gol
  -ftree-reassoc -ftree-sink -ftree-slsr -ftree-sra @gol
-@@ -7534,6 +7535,11 @@
+@@ -6418,6 +6419,7 @@
+ -fstrict-aliasing -fstrict-overflow @gol
+ -ftree-switch-conversion -ftree-tail-merge @gol
+ -ftree-pre @gol
++-ftree-loop-fusion @gol
+ -ftree-vrp}
+ 
+ Please note the warning under @option{-fgcse} about
+@@ -7534,6 +7536,11 @@
  @end smallexample
  potentially producing data races.
  
