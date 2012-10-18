@@ -1,5 +1,5 @@
-rm *.gimple
-rm *.lfusion
-rm *.optimized
-rm a.out
-rm *.s
+rm -f *.gimple
+rm -f *.lfusion
+rm -f *.optimized
+rm -f a.out
+rm -f *.s
