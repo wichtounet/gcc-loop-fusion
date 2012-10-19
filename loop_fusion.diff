@@ -237,7 +237,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,969 @@
+@@ -0,0 +1,1002 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -761,15 +761,15 @@ Index: gcc/tree-loop-fusion.c
 +    VEC (loop_p, heap) *loop_nest_first = VEC_alloc (loop_p, heap, 3);
 +
 +    bool success = true;
-+    success &= compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
-+            &datarefs_next, &dependence_relations_next); 
 +    success &= compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, 
 +            &datarefs_first, &dependence_relations_first);
++    success &= compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
++            &datarefs_next, &dependence_relations_next); 
 +
 +    //If the data dependence does not success, we consider the loops as dependent
 +    bool ret = false;
 +
-+    if(!success)
++    if (!success)
 +    {
 +        print ("Data dependence analysis failed\n");
 +    }
@@ -811,71 +811,104 @@ Index: gcc/tree-loop-fusion.c
 +                    dump_data_reference (dump_file, ref_second);
 +                }
 +            }
-+        }
 +
-+        //Consider each pair of dependences between the loops
-+        FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
++            fprintf (dump_file, "Print data dependence relations of A\n");
++            dump_data_dependence_relations (dump_file, dependence_relations_first);
++            
++            fprintf (dump_file, "Print data dependence relations of B\n");
++            dump_data_dependence_relations (dump_file, dependence_relations_next);
++        }
++        
++        ddr_p ddr;
++
++        FOR_EACH_VEC_ELT (ddr_p, dependence_relations_first, i, ddr)
 +        {
-+            //TODO Find what to do with these "NULL" references
-+            if(!ref_first || !DR_STMT (ref_first))
++            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
 +            {
-+                print ("A and B are not independent due to unresolved dependences\n");
++                print ("A and B are not independent due don't know relation in A\n");
 +                ret = false;
 +                break;
 +            }
++        }
++        
++        FOR_EACH_VEC_ELT (ddr_p, dependence_relations_next, i, ddr)
++        {
++            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
++            {
++                print ("A and B are not independent due don't know relation in B\n");
++                ret = false;
++                break;
++            }
++        }
 +
-+            FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
++        //Only if there are no "don't know" data dependence relations
++        if (ret)
++        {
++            //Consider each pair of dependences between the loops
++            FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
 +            {
 +                //TODO Find what to do with these "NULL" references
-+                if(!ref_second || !DR_STMT (ref_second))
++                if (!ref_first || !DR_STMT (ref_first))
 +                {
 +                    print ("A and B are not independent due to unresolved dependences\n");
 +                    ret = false;
 +                    break;
 +                }
 +
-+                if (same_data_refs_base_objects (ref_first, ref_second))
++                FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
 +                {
-+                    if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
++                    //TODO Find what to do with these "NULL" references
++                    if (!ref_second || !DR_STMT (ref_second))
 +                    {
-+                        print ("Found an input-dependence\n");
-+                        //Input reference can be ignored
-+                    } 
-+                    else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_second))
-+                    {
-+                        print ("Found an output-dependence\n");
++                        print ("A and B are not independent due to unresolved dependences\n");
++                        ret = false;
++                        break;
++                    }
 +
-+                        if (!are_equivalent (ref_first, ref_second))
-+                        {
-+                            print ("An output-dependence is blocking\n");
-+                            ret = false;
-+                        }
-+                    } 
-+                    else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_second))
++                    if (same_data_refs_base_objects (ref_first, ref_second))
 +                    {
-+                        print ("Found an anti-dependence\n");
-+
-+                        if (!are_equivalent (ref_first, ref_second))
++                        if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
 +                        {
-+                            print ("An anti-dependence is blocking\n");
-+                            ret = false;
-+                        }
-+                    } 
-+                    else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_second))
-+                    {
-+                        print ("Found a true-dependence\n");
-+
-+                        if (!are_equivalent (ref_first, ref_second))
++                            print ("Found an input-dependence\n");
++                            //Input reference can be ignored
++                        } 
++                        else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_second))
 +                        {
-+                            print ("A true-dependence is blocking\n");
-+                            ret = false;
++                            print ("Found an output-dependence\n");
++
++                            if (!are_equivalent (ref_first, ref_second))
++                            {
++                                print ("An output-dependence is blocking\n");
++                                ret = false;
++                            }
++                        } 
++                        else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_second))
++                        {
++                            print ("Found an anti-dependence\n");
++
++                            if (!are_equivalent (ref_first, ref_second))
++                            {
++                                print ("An anti-dependence is blocking\n");
++                                ret = false;
++                            }
++                        } 
++                        else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_second))
++                        {
++                            print ("Found a true-dependence\n");
++
++                            if (!are_equivalent (ref_first, ref_second))
++                            {
++                                print ("A true-dependence is blocking\n");
++                                ret = false;
++                            }
 +                        }
 +                    }
 +                }
-+            }
 +
-+            if(!ret){
-+                break;
++                if (!ret)
++                {
++                    break;
++                }
 +            }
 +        }
 +    }
@@ -902,7 +935,7 @@ Index: gcc/tree-loop-fusion.c
 +    basic_block bb;
 +    FOR_EACH_BB (bb)
 +    {
-+        if(bb == block)
++        if (bb == block)
 +        {
 +            break;
 +        }
@@ -1029,13 +1062,13 @@ Index: gcc/tree-loop-fusion.c
 +    tree type_iv_next = TREE_TYPE(ssa_iv_name_next);
 +
 +    //The induction variables must be both signed or both unsigned
-+    if((TYPE_UNSIGNED (type_iv_first) && !TYPE_UNSIGNED (type_iv_next)) 
++    if ((TYPE_UNSIGNED (type_iv_first) && !TYPE_UNSIGNED (type_iv_next)) 
 +            || (!TYPE_UNSIGNED (type_iv_first) && TYPE_UNSIGNED (type_iv_next))){
 +        return false;
 +    }
 +    
 +    //The induction variables must of same precision
-+    if(TYPE_PRECISION (type_iv_first) != TYPE_PRECISION (type_iv_next)){
++    if (TYPE_PRECISION (type_iv_first) != TYPE_PRECISION (type_iv_next)){
 +        return false;
 +    }
 +
@@ -1118,7 +1151,7 @@ Index: gcc/tree-loop-fusion.c
 +            unsigned int index_next  = bb_stream_index (loop_next->header);
 +
 +            //Order them so that the first is before the next in the instruction stream
-+            if(index_first > index_next){
++            if (index_first > index_next){
 +                struct loop* tmp = loop_next;
 +                loop_next = loop_first;
 +                loop_first = tmp;
