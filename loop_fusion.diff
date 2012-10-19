@@ -42,17 +42,6 @@ Index: gcc/tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
-Index: gcc/testsuite/gcc.dg/autopar/reduc-6.c
-===================================================================
---- gcc/testsuite/gcc.dg/autopar/reduc-6.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/autopar/reduc-6.c	(working copy)
-@@ -1,5 +1,5 @@
- /* { dg-do compile } */
--/* { dg-options "-O2 -ftree-parallelize-loops=4 -fdump-tree-parloops-details -fdump-tree-optimized" } */
-+/* { dg-options "-O2 -fno-tree-loop-fusion -ftree-parallelize-loops=4 -fdump-tree-parloops-details -fdump-tree-optimized" } */
- 
- #include <stdarg.h>
- #include <stdlib.h>
 Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c	(revision 0)
@@ -216,52 +205,20 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-5.c
 +
 +/* { dg-final { scan-tree-dump-times "Loop Fused: " 0 "lfusion" } } */
 +/* { dg-final { cleanup-tree-dump "lfusion" } } */
-Index: gcc/testsuite/gcc.dg/vect/pr21591.c
+Index: gcc/testsuite/gcc.dg/vect/vect.exp
 ===================================================================
---- gcc/testsuite/gcc.dg/vect/pr21591.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/vect/pr21591.c	(working copy)
-@@ -1,4 +1,5 @@
- /* { dg-do compile } */
-+/* { dg-options "-fno-tree-loop-fusion" } */
- /* { dg-require-effective-target vect_int } */
+--- gcc/testsuite/gcc.dg/vect/vect.exp	(revision 192574)
++++ gcc/testsuite/gcc.dg/vect/vect.exp	(working copy)
+@@ -42,6 +42,9 @@
+ # These flags are used for all targets.
+ lappend DEFAULT_VECTCFLAGS "-ftree-vectorize" "-fno-vect-cost-model" "-fno-common"
  
- struct a
-Index: gcc/testsuite/gcc.dg/vect/vect-42.c
-===================================================================
---- gcc/testsuite/gcc.dg/vect/vect-42.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/vect/vect-42.c	(working copy)
-@@ -1,3 +1,4 @@
-+/* { dg-options "-fno-tree-loop-fusion" } */
- /* { dg-require-effective-target vect_float } */
- /* { dg-add-options double_vectors } */
++# Loop Fusion has to be disabled for the tests
++lappend DEFAULT_VECTCFLAGS "-fnotree-loop-fusion"
++
+ # Initialize `dg'.
+ dg-init
  
-Index: gcc/testsuite/gcc.dg/vect/vect-35.c
-===================================================================
---- gcc/testsuite/gcc.dg/vect/vect-35.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/vect/vect-35.c	(working copy)
-@@ -1,3 +1,4 @@
-+/* { dg-options "-fno-tree-loop-fusion" } */
- /* { dg-require-effective-target vect_int } */
- 
- #include <stdarg.h>
-Index: gcc/testsuite/gcc.dg/vect/vect-35-big-array.c
-===================================================================
---- gcc/testsuite/gcc.dg/vect/vect-35-big-array.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/vect/vect-35-big-array.c	(working copy)
-@@ -1,3 +1,4 @@
-+/* { dg-options "-fno-tree-loop-fusion" } */
- /* { dg-require-effective-target vect_int } */
- 
- #include <stdarg.h>
-Index: gcc/testsuite/gcc.dg/vect/no-vfa-vect-43.c
-===================================================================
---- gcc/testsuite/gcc.dg/vect/no-vfa-vect-43.c	(revision 192574)
-+++ gcc/testsuite/gcc.dg/vect/no-vfa-vect-43.c	(working copy)
-@@ -1,3 +1,4 @@
-+/* { dg-options "-fno-tree-loop-fusion" } */
- /* { dg-require-effective-target vect_float } */
- 
- #include <stdarg.h>
 Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
