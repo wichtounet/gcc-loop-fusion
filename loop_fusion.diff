@@ -237,7 +237,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,952 @@
+@@ -0,0 +1,963 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -436,8 +436,6 @@ Index: gcc/tree-loop-fusion.c
 +            break;
 +        }
 +    }
-+    
-+    gcc_assert (def != NULL_TREE);
 +
 +    return def;
 +}
@@ -465,6 +463,10 @@ Index: gcc/tree-loop-fusion.c
 +    
 +    tree use = get_phi_var_for_iv (loop_first, ssa_iv_name_first);
 +    tree def = get_phi_var_for_iv (loop_next, ssa_iv_name_next);
++    
++    //Normally guaranteed by the conditions before fusing
++    gcc_assert (use != NULL_TREE);
++    gcc_assert (def != NULL_TREE);
 +    
 +    replace_uses_by (def, use);
 +    
@@ -943,7 +945,15 @@ Index: gcc/tree-loop-fusion.c
 +    tree ssa_iv_name = get_ssa_name_iv (loop);
 +
 +    //The Induction Variable is not of integer type
-+    if(TREE_CODE(TREE_TYPE(ssa_iv_name)) != INTEGER_TYPE)
++    if (TREE_CODE (TREE_TYPE (ssa_iv_name)) != INTEGER_TYPE)
++    {
++        return false;
++    }
++
++    tree phi_iv = get_phi_var_for_iv (loop, ssa_iv_name);
++
++    //The PHI node is necessary for renaming
++    if (phi_iv == NULL_TREE)
 +    {
 +        return false;
 +    }
@@ -952,7 +962,8 @@ Index: gcc/tree-loop-fusion.c
 +    basic_block latch = loop->latch;
 +
 +    //The header and the latch should be sibling in the instruction stream
-+    if(!(header->next_bb == latch || latch->next_bb == header)){
++    if (!(header->next_bb == latch || latch->next_bb == header))
++    {
 +        return false;
 +    }
 +
