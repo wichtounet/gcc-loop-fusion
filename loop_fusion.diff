@@ -563,9 +563,9 @@ Index: gcc/tree-loop-fusion.c
 +    /* 6. Fix edges */
 +
 +    //Fix the type of the edge
-+    EDGE_SUCC(header_next, 0)->flags |= EDGE_FALLTHRU;
-+    EDGE_SUCC(header_next, 0)->flags &= ~EDGE_TRUE_VALUE;
-+    EDGE_SUCC(header_next, 0)->flags &= ~EDGE_FALSE_VALUE;
++    single_succ_edge (header_next)->flags |= EDGE_FALLTHRU;
++    single_succ_edge (header_next)->flags &= ~EDGE_TRUE_VALUE;
++    single_succ_edge (header_next)->flags &= ~EDGE_FALSE_VALUE;
 +    
 +    //Remove the condition from the old loop header
 +    for (gimple_stmt_iterator gsi = gsi_start_bb (header_next); !gsi_end_p (gsi);)
@@ -590,7 +590,7 @@ Index: gcc/tree-loop-fusion.c
 +    if (gimple_seq_empty_p (phi_nodes (between_bb)) 
 +            && gimple_seq_empty_p (bb_seq (between_bb)))
 +    {
-+        redirect_edge_and_branch (EDGE_SUCC (loop_first->header, 1), header_next);
++        redirect_edge_and_branch (single_pred_edge (between_bb), header_next);
 +
 +        delete_basic_block (between_bb);
 +    } 
