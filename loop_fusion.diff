@@ -223,7 +223,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,937 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -759,9 +759,12 @@ Index: gcc/tree-loop-fusion.c
 +        fprintf (dump_file, "Print data reference of A\n");
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
 +        {
-+            if(!ref_first || !DR_STMT (ref_first)){
++            if (!ref_first || !DR_STMT (ref_first))
++            {
 +                fprintf (dump_file, "Null data reference\n");
-+            } else {
++            } 
++            else 
++            {
 +                dump_data_reference (dump_file, ref_first);
 +            }
 +        }
@@ -769,9 +772,12 @@ Index: gcc/tree-loop-fusion.c
 +        fprintf (dump_file, "Print data reference of B\n");
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
 +        {
-+            if(!ref_second || !DR_STMT (ref_second)){
++            if (!ref_second || !DR_STMT (ref_second))
++            {
 +                fprintf (dump_file, "Null data reference\n");
-+            } else {
++            } 
++            else 
++            {
 +                dump_data_reference (dump_file, ref_second);
 +            }
 +        }
@@ -784,7 +790,8 @@ Index: gcc/tree-loop-fusion.c
 +    FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
 +    {
 +        //TODO Find what to do with these "NULL" references
-+        if(!ref_first || !DR_STMT(ref_first)){
++        if(!ref_first || !DR_STMT (ref_first))
++        {
 +            print ("A and B are not independent due to unresolved dependences\n");
 +            ret = false;
 +            break;
@@ -793,7 +800,8 @@ Index: gcc/tree-loop-fusion.c
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
 +        {
 +            //TODO Find what to do with these "NULL" references
-+            if(!ref_second || !DR_STMT(ref_second)){
++            if(!ref_second || !DR_STMT (ref_second))
++            {
 +                print ("A and B are not independent due to unresolved dependences\n");
 +                ret = false;
 +                break;
