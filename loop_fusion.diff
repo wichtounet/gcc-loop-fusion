@@ -237,7 +237,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,963 @@
+@@ -0,0 +1,969 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -938,6 +938,12 @@ Index: gcc/tree-loop-fusion.c
 +     
 +    //The algorithm only supports loops with a header and a latch
 +    if (loop->num_nodes > 2)
++    {
++        return false;
++    }
++
++    //The latch must be empty because the statements are not transferred to the other latch
++    if (!gimple_seq_empty_p (bb_seq (loop->latch)) || !gimple_seq_empty_p (phi_nodes (loop->latch)))
 +    {
 +        return false;
 +    }
