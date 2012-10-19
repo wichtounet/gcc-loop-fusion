@@ -42,6 +42,20 @@ Index: gcc/tree-pass.h
  extern struct gimple_opt_pass pass_loop_distribution;
  extern struct gimple_opt_pass pass_vectorize;
  extern struct gimple_opt_pass pass_slp_vectorize;
+Index: gcc/testsuite/gcc.dg/autopar/autopar.exp
+===================================================================
+--- gcc/testsuite/gcc.dg/autopar/autopar.exp	(revision 192574)
++++ gcc/testsuite/gcc.dg/autopar/autopar.exp	(working copy)
+@@ -29,6 +29,9 @@
+     set DEFAULT_CFLAGS " -ansi -pedantic-errors"
+ }
+ 
++# Loop Fusion has to be disabled for the tests
++lappend DEFAULT_CFLAGS "-fno-tree-loop-fusion"
++
+ # Initialize `dg'.
+ dg-init
+ 
 Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c	(revision 0)
@@ -223,7 +237,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,940 @@
+@@ -0,0 +1,952 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -744,111 +758,123 @@ Index: gcc/tree-loop-fusion.c
 +    VEC (loop_p, heap) *loop_nest_next = VEC_alloc (loop_p, heap, 3);
 +    VEC (loop_p, heap) *loop_nest_first = VEC_alloc (loop_p, heap, 3);
 +
-+    compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
++    bool success = true;
++    success &= compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
 +            &datarefs_next, &dependence_relations_next); 
-+    compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, 
++    success &= compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, 
 +            &datarefs_first, &dependence_relations_first);
 +
-+    data_reference_p ref_first;
-+    data_reference_p ref_second;
-+    unsigned int i;
-+    unsigned int j;
++    //If the data dependence does not success, we consider the loops as dependent
++    bool ret = false;
 +
-+    if (dump_file && (dump_flags & TDF_DETAILS))
++    if(!success)
 +    {
-+        fprintf (dump_file, "Print data reference of A\n");
++        print ("Data dependence analysis failed\n");
++    }
++    else
++    {
++        //If no dependences are found later, the loops are not dependent
++        ret = true;
++
++        data_reference_p ref_first;
++        data_reference_p ref_second;
++        unsigned int i;
++        unsigned int j;
++
++        //Dump data references
++        if (dump_file && (dump_flags & TDF_DETAILS))
++        {
++            fprintf (dump_file, "Print data reference of A\n");
++            FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
++            {
++                if (!ref_first || !DR_STMT (ref_first))
++                {
++                    fprintf (dump_file, "Null data reference\n");
++                } 
++                else 
++                {
++                    dump_data_reference (dump_file, ref_first);
++                }
++            }
++
++            fprintf (dump_file, "Print data reference of B\n");
++            FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
++            {
++                if (!ref_second || !DR_STMT (ref_second))
++                {
++                    fprintf (dump_file, "Null data reference\n");
++                } 
++                else 
++                {
++                    dump_data_reference (dump_file, ref_second);
++                }
++            }
++        }
++
++        //Consider each pair of dependences between the loops
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
 +        {
-+            if (!ref_first || !DR_STMT (ref_first))
-+            {
-+                fprintf (dump_file, "Null data reference\n");
-+            } 
-+            else 
-+            {
-+                dump_data_reference (dump_file, ref_first);
-+            }
-+        }
-+        
-+        fprintf (dump_file, "Print data reference of B\n");
-+        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
-+        {
-+            if (!ref_second || !DR_STMT (ref_second))
-+            {
-+                fprintf (dump_file, "Null data reference\n");
-+            } 
-+            else 
-+            {
-+                dump_data_reference (dump_file, ref_second);
-+            }
-+        }
-+    }
-+
-+    //If no dependences are found later, the loops are not dependent
-+    bool ret = true;
-+
-+    //Consider each pair of dependences between the loops
-+    FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
-+    {
-+        //TODO Find what to do with these "NULL" references
-+        if(!ref_first || !DR_STMT (ref_first))
-+        {
-+            print ("A and B are not independent due to unresolved dependences\n");
-+            ret = false;
-+            break;
-+        }
-+
-+        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
-+        {
 +            //TODO Find what to do with these "NULL" references
-+            if(!ref_second || !DR_STMT (ref_second))
++            if(!ref_first || !DR_STMT (ref_first))
 +            {
 +                print ("A and B are not independent due to unresolved dependences\n");
 +                ret = false;
 +                break;
 +            }
 +
-+            if (same_data_refs_base_objects (ref_first, ref_second))
++            FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
 +            {
-+                if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
++                //TODO Find what to do with these "NULL" references
++                if(!ref_second || !DR_STMT (ref_second))
 +                {
-+                    print ("Found an input-dependence\n");
-+                    //Input reference can be ignored
-+                } 
-+                else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_second))
-+                {
-+                    print ("Found an output-dependence\n");
++                    print ("A and B are not independent due to unresolved dependences\n");
++                    ret = false;
++                    break;
++                }
 +
-+                    if (!are_equivalent (ref_first, ref_second))
-+                    {
-+                        print ("An output-dependence is blocking\n");
-+                        ret = false;
-+                    }
-+                } 
-+                else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_second))
++                if (same_data_refs_base_objects (ref_first, ref_second))
 +                {
-+                    print ("Found an anti-dependence\n");
-+
-+                    if (!are_equivalent (ref_first, ref_second))
++                    if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
 +                    {
-+                        print ("An anti-dependence is blocking\n");
-+                        ret = false;
-+                    }
-+                } 
-+                else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_second))
-+                {
-+                    print ("Found a true-dependence\n");
-+
-+                    if (!are_equivalent (ref_first, ref_second))
++                        print ("Found an input-dependence\n");
++                        //Input reference can be ignored
++                    } 
++                    else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_second))
 +                    {
-+                        print ("A true-dependence is blocking\n");
-+                        ret = false;
++                        print ("Found an output-dependence\n");
++
++                        if (!are_equivalent (ref_first, ref_second))
++                        {
++                            print ("An output-dependence is blocking\n");
++                            ret = false;
++                        }
++                    } 
++                    else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_second))
++                    {
++                        print ("Found an anti-dependence\n");
++
++                        if (!are_equivalent (ref_first, ref_second))
++                        {
++                            print ("An anti-dependence is blocking\n");
++                            ret = false;
++                        }
++                    } 
++                    else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_second))
++                    {
++                        print ("Found a true-dependence\n");
++
++                        if (!are_equivalent (ref_first, ref_second))
++                        {
++                            print ("A true-dependence is blocking\n");
++                            ret = false;
++                        }
 +                    }
 +                }
 +            }
-+        }
 +
-+        if(!ret){
-+            break;
++            if(!ret){
++                break;
++            }
 +        }
 +    }
 +
