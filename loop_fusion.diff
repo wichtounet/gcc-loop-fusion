@@ -214,7 +214,7 @@ Index: gcc/testsuite/gcc.dg/vect/vect.exp
  lappend DEFAULT_VECTCFLAGS "-ftree-vectorize" "-fno-vect-cost-model" "-fno-common"
  
 +# Loop Fusion has to be disabled for the tests
-+lappend DEFAULT_VECTCFLAGS "-fnotree-loop-fusion"
++lappend DEFAULT_VECTCFLAGS "-fno-tree-loop-fusion"
 +
  # Initialize `dg'.
  dg-init
@@ -223,7 +223,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,940 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -867,12 +867,15 @@ Index: gcc/tree-loop-fusion.c
 +/* Return the index of the basic block in the instruction stream */
 +
 +static unsigned int
-+bb_stream_index (basic_block block){
++bb_stream_index (basic_block block)
++{
 +    unsigned int index = 0;
 +
 +    basic_block bb;
-+    FOR_EACH_BB(bb){
-+        if(bb == block){
++    FOR_EACH_BB (bb)
++    {
++        if(bb == block)
++        {
 +            break;
 +        }
 +
