@@ -251,7 +251,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1002 @@
+@@ -0,0 +1,1041 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -266,6 +266,7 @@ Index: gcc/tree-loop-fusion.c
 +#include "tree-data-ref.h"
 +#include "tree-scalar-evolution.h"
 +#include "tree-pass.h"
++#include "tree-ssa-alias.h"
 +
 +#include <iostream>
 +
@@ -756,6 +757,44 @@ Index: gcc/tree-loop-fusion.c
 +    return true;
 +}
 +
++static inline bool
++deep_same_data_refs_base_objects (data_reference_p a, data_reference_p b)
++{
++    /*print ("Compare two data references\n");
++
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
++        dump_data_reference(dump_file, a);
++        dump_data_reference(dump_file, b);
++    }*/
++
++    /*if(dr_may_alias_p (a, b, true)){
++        print("They may alias \n");
++    }
++
++    if(TREE_CODE( DR_BASE_OBJECT (a)) == MEM_REF && TREE_CODE( DR_BASE_OBJECT (b)) == MEM_REF){
++        tree left_a = TREE_OPERAND (DR_BASE_OBJECT (a), 0);
++        tree left_b = TREE_OPERAND (DR_BASE_OBJECT (b), 0);
++
++        if(refs_may_alias_p (left_a, left_b)){
++            print("The refs may alias \n");
++        }
++    }*/
++
++    bool same = same_data_refs_base_objects(a, b);
++
++    /*if(same)
++    {
++        print("A and B are to the same object\n");
++    }
++    else
++    {
++        print("A and B are not to the same object\n");
++    }*/
++
++    return same;
++}
++
 +/* Returns true if loops are independent. */
 +
 +static bool
@@ -793,7 +832,7 @@ Index: gcc/tree-loop-fusion.c
 +        ret = true;
 +
 +        data_reference_p ref_first;
-+        data_reference_p ref_second;
++        data_reference_p ref_next;
 +        unsigned int i;
 +        unsigned int j;
 +
@@ -814,15 +853,15 @@ Index: gcc/tree-loop-fusion.c
 +            }
 +
 +            fprintf (dump_file, "Print data reference of B\n");
-+            FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
++            FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_next)
 +            {
-+                if (!ref_second || !DR_STMT (ref_second))
++                if (!ref_next || !DR_STMT (ref_next))
 +                {
 +                    fprintf (dump_file, "Null data reference\n");
 +                } 
 +                else 
 +                {
-+                    dump_data_reference (dump_file, ref_second);
++                    dump_data_reference (dump_file, ref_next);
 +                }
 +            }
 +
@@ -869,48 +908,48 @@ Index: gcc/tree-loop-fusion.c
 +                    break;
 +                }
 +
-+                FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_second)
++                FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_next)
 +                {
 +                    //TODO Find what to do with these "NULL" references
-+                    if (!ref_second || !DR_STMT (ref_second))
++                    if (!ref_next || !DR_STMT (ref_next))
 +                    {
 +                        print ("A and B are not independent due to unresolved dependences\n");
 +                        ret = false;
 +                        break;
 +                    }
 +
-+                    if (same_data_refs_base_objects (ref_first, ref_second))
++                    if (deep_same_data_refs_base_objects (ref_first, ref_next))
 +                    {
-+                        if (DR_IS_READ (ref_first) && DR_IS_READ (ref_second))
++                        if (DR_IS_READ (ref_first) && DR_IS_READ (ref_next))
 +                        {
 +                            print ("Found an input-dependence\n");
 +                            //Input reference can be ignored
 +                        } 
-+                        else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_second))
++                        else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_next))
 +                        {
 +                            print ("Found an output-dependence\n");
 +
-+                            if (!are_equivalent (ref_first, ref_second))
++                            if (!are_equivalent (ref_first, ref_next))
 +                            {
 +                                print ("An output-dependence is blocking\n");
 +                                ret = false;
 +                            }
 +                        } 
-+                        else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_second))
++                        else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_next))
 +                        {
 +                            print ("Found an anti-dependence\n");
 +
-+                            if (!are_equivalent (ref_first, ref_second))
++                            if (!are_equivalent (ref_first, ref_next))
 +                            {
 +                                print ("An anti-dependence is blocking\n");
 +                                ret = false;
 +                            }
 +                        } 
-+                        else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_second))
++                        else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_next))
 +                        {
 +                            print ("Found a true-dependence\n");
 +
-+                            if (!are_equivalent (ref_first, ref_second))
++                            if (!are_equivalent (ref_first, ref_next))
 +                            {
 +                                print ("A true-dependence is blocking\n");
 +                                ret = false;
