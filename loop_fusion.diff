@@ -1,6 +1,6 @@
 Index: gcc/doc/invoke.texi
 ===================================================================
---- gcc/doc/invoke.texi	(revision 192574)
+--- gcc/doc/invoke.texi	(revision 192697)
 +++ gcc/doc/invoke.texi	(working copy)
 @@ -414,6 +414,7 @@
  -ftree-forwprop -ftree-fre -ftree-loop-if-convert @gol
@@ -18,7 +18,7 @@ Index: gcc/doc/invoke.texi
  -ftree-vrp}
  
  Please note the warning under @option{-fgcse} about
-@@ -7534,6 +7536,11 @@
+@@ -7542,6 +7544,11 @@
  @end smallexample
  potentially producing data races.
  
@@ -32,7 +32,7 @@ Index: gcc/doc/invoke.texi
  big loop bodies and allow further loop optimizations, like
 Index: gcc/tree-pass.h
 ===================================================================
---- gcc/tree-pass.h	(revision 192574)
+--- gcc/tree-pass.h	(revision 192697)
 +++ gcc/tree-pass.h	(working copy)
 @@ -281,6 +281,7 @@
  extern struct gimple_opt_pass pass_graphite;
@@ -44,7 +44,7 @@ Index: gcc/tree-pass.h
  extern struct gimple_opt_pass pass_slp_vectorize;
 Index: gcc/testsuite/gfortran.dg/vect/vect.exp
 ===================================================================
---- gcc/testsuite/gfortran.dg/vect/vect.exp	(revision 192574)
+--- gcc/testsuite/gfortran.dg/vect/vect.exp	(revision 192697)
 +++ gcc/testsuite/gfortran.dg/vect/vect.exp	(working copy)
 @@ -28,6 +28,9 @@
  lappend DEFAULT_VECTCFLAGS "-O2" "-ftree-vectorize" "-fno-vect-cost-model" \
@@ -58,7 +58,7 @@ Index: gcc/testsuite/gfortran.dg/vect/vect.exp
  # Executing vector instructions on a system without hardware vector support
 Index: gcc/testsuite/gcc.dg/autopar/autopar.exp
 ===================================================================
---- gcc/testsuite/gcc.dg/autopar/autopar.exp	(revision 192574)
+--- gcc/testsuite/gcc.dg/autopar/autopar.exp	(revision 192697)
 +++ gcc/testsuite/gcc.dg/autopar/autopar.exp	(working copy)
 @@ -29,6 +29,9 @@
      set DEFAULT_CFLAGS " -ansi -pedantic-errors"
@@ -235,7 +235,7 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-5.c
 +/* { dg-final { cleanup-tree-dump "lfusion" } } */
 Index: gcc/testsuite/gcc.dg/vect/vect.exp
 ===================================================================
---- gcc/testsuite/gcc.dg/vect/vect.exp	(revision 192574)
+--- gcc/testsuite/gcc.dg/vect/vect.exp	(revision 192697)
 +++ gcc/testsuite/gcc.dg/vect/vect.exp	(working copy)
 @@ -42,6 +42,9 @@
  # These flags are used for all targets.
@@ -1440,7 +1440,7 @@ Index: gcc/tree-loop-fusion.c
 +};
 Index: gcc/opts.c
 ===================================================================
---- gcc/opts.c	(revision 192574)
+--- gcc/opts.c	(revision 192697)
 +++ gcc/opts.c	(working copy)
 @@ -487,6 +487,7 @@
      { OPT_LEVELS_2_PLUS, OPT_ftree_tail_merge, NULL, 1 },
@@ -1452,7 +1452,7 @@ Index: gcc/opts.c
      { OPT_LEVELS_3_PLUS, OPT_ftree_loop_distribute_patterns, NULL, 1 },
 Index: gcc/timevar.def
 ===================================================================
---- gcc/timevar.def	(revision 192574)
+--- gcc/timevar.def	(revision 192697)
 +++ gcc/timevar.def	(working copy)
 @@ -171,6 +171,7 @@
  DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
@@ -1464,7 +1464,7 @@ Index: gcc/timevar.def
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
 Index: gcc/tree-parloops.c
 ===================================================================
---- gcc/tree-parloops.c	(revision 192574)
+--- gcc/tree-parloops.c	(revision 192697)
 +++ gcc/tree-parloops.c	(working copy)
 @@ -364,7 +364,7 @@
     are independent on each other (that is, if we can execute them
@@ -1477,9 +1477,9 @@ Index: gcc/tree-parloops.c
    VEC (loop_p, heap) *loop_nest;
 Index: gcc/common.opt
 ===================================================================
---- gcc/common.opt	(revision 192574)
+--- gcc/common.opt	(revision 192697)
 +++ gcc/common.opt	(working copy)
-@@ -2050,6 +2050,10 @@
+@@ -2055,6 +2055,10 @@
  Common Report Var(flag_optimize_strlen) Optimization
  Enable string length optimizations on trees
  
@@ -1492,9 +1492,9 @@ Index: gcc/common.opt
  Enable loop distribution on trees
 Index: gcc/Makefile.in
 ===================================================================
---- gcc/Makefile.in	(revision 192574)
+--- gcc/Makefile.in	(revision 192697)
 +++ gcc/Makefile.in	(working copy)
-@@ -1356,6 +1356,7 @@
+@@ -1357,6 +1357,7 @@
  	tree-inline.o \
  	tree-into-ssa.o \
  	tree-iterator.o \
@@ -1502,7 +1502,7 @@ Index: gcc/Makefile.in
  	tree-loop-distribution.o \
  	tree-nested.o \
  	tree-nomudflap.o \
-@@ -2578,6 +2579,11 @@
+@@ -2579,6 +2580,11 @@
     dumpfile.h $(TM_H) $(GGC_H) $(TREE_H) $(TREE_FLOW_H) \
     $(CFGLOOP_H) $(TREE_PASS_H) $(TREE_VECTORIZER_H) \
     $(TREE_PRETTY_PRINT_H)
@@ -1516,7 +1516,7 @@ Index: gcc/Makefile.in
  tree-parloops.o: tree-parloops.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
 Index: gcc/passes.c
 ===================================================================
---- gcc/passes.c	(revision 192574)
+--- gcc/passes.c	(revision 192697)
 +++ gcc/passes.c	(working copy)
 @@ -1450,6 +1450,7 @@
  	  NEXT_PASS (pass_scev_cprop);
