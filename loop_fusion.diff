@@ -251,7 +251,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1047 @@
+@@ -0,0 +1,1186 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -289,6 +289,32 @@ Index: gcc/tree-loop-fusion.c
 +   |ENDDO
 +
 +*/
++
++extern bool
++loop_parallel_p (struct loop *loop, struct obstack * parloop_obstack);
++
++/* Return true if a loop is parallel. */
++
++static bool
++loop_parallel_p (struct loop* loop)
++{
++    struct obstack parloop_obstack;
++    gcc_obstack_init (&parloop_obstack);
++
++    bool parallel = loop_parallel_p (loop, &parloop_obstack);
++
++    obstack_free (&parloop_obstack, NULL);
++
++    return parallel;
++}
++
++/* Return true if a loop is sequential. */
++
++static bool
++loop_sequential_p (struct loop* loop)
++{
++    return !loop_parallel_p(loop);
++}
 +
 +static struct
 +{
@@ -1136,15 +1162,128 @@ Index: gcc/tree-loop-fusion.c
 +    return are_independent (loop_first, loop_next);
 +}
 +
++static unsigned int
++size (struct loop *loop)
++{
++    unsigned int count = 0;
++
++    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    {
++        ++count;
++    }
++
++    return count;
++}
++
++/* Returns true if loops have a data reference in common on an array. */
++
++static bool
++have_common_array_reference (struct loop *loop_first, struct loop *loop_next)
++{
++    VEC (data_reference_p, heap) *datarefs_next = 
++        VEC_alloc (data_reference_p, heap, 10);
++    VEC (data_reference_p, heap) *datarefs_first = 
++        VEC_alloc (data_reference_p, heap, 10);
++
++    VEC (ddr_p, heap) *dependence_relations_next = 
++        VEC_alloc (ddr_p, heap, 10 * 10);
++    VEC (ddr_p, heap) *dependence_relations_first = 
++        VEC_alloc (ddr_p, heap, 10 * 10);
++
++    VEC (loop_p, heap) *loop_nest_next = VEC_alloc (loop_p, heap, 3);
++    VEC (loop_p, heap) *loop_nest_first = VEC_alloc (loop_p, heap, 3);
++
++    compute_data_dependences_for_loop (loop_first, true, &loop_nest_first, 
++            &datarefs_first, &dependence_relations_first);
++    compute_data_dependences_for_loop (loop_next, true, &loop_nest_next, 
++            &datarefs_next, &dependence_relations_next); 
++
++    bool ret = false;
++
++    data_reference_p ref_first;
++    data_reference_p ref_next;
++    unsigned int i;
++    unsigned int j;
++
++    //Consider each pair of dependences between the loops
++    FOR_EACH_VEC_ELT (data_reference_p, datarefs_first, i, ref_first)
++    {
++        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_next)
++        {
++            if (deep_same_data_refs_base_objects (ref_first, ref_next))
++            {
++                //TODO Verify that it is an array
++
++                ret = true;
++                break;
++            }
++        }
++
++        if(ret)
++        {
++            break;
++        }
++    }
++
++    free_dependence_relations (dependence_relations_next);
++    free_dependence_relations (dependence_relations_first);
++
++    free_data_refs (datarefs_next);
++    free_data_refs (datarefs_first);
++
++    VEC_free (loop_p, heap, loop_nest_next);
++    VEC_free (loop_p, heap, loop_nest_first);
++
++    return ret;
++}
++
 +/* 
 + * Return true if the two loops are interesting to merge, 
 + * otherwise return false.
 + */
 +
 +static bool
-+loops_are_interesting_to_merge (struct loop * /*loop_first*/, struct loop * /*loop_next*/)
++loops_are_interesting_to_merge (struct loop *loop_first, struct loop *loop_next)
 +{
-+    //TODO
++    bool profile = false;
++
++    if (profile)
++    {
++        //TODO
++    }
++    else 
++    {
++        //Do not create loops with big body
++        if (size (loop_first) + size (loop_next) > 50)
++        {
++            return false;
++        }
++
++        double_int hundred = double_int::from_uhwi(100u);
++
++        //Fuse only loops that iterate enough times
++        if (loop_first->nb_iterations_estimate.ult (hundred))
++        {
++            if (loop_outer (loop_first) || loop_outer (loop_first)->nb_iterations_estimate.ult (hundred))
++            {
++                return false;
++            }
++        }
++
++        //Only merge parallel/parallel or sequential/sequential loops if auto parallelization is enabled
++        if (flag_tree_parallelize_loops > 1 
++                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
++        {
++            return false;
++        }
++
++        //Try to predict cache misses
++        if ((!have_common_array_reference (loop_first, loop_next)))
++        {
++            return false;
++        }
++    }
++
 +    return true;
 +}
 +
@@ -1323,6 +1462,19 @@ Index: gcc/timevar.def
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
  DEFTIMEVAR (TV_TREE_PREFETCH	     , "tree prefetching")
+Index: gcc/tree-parloops.c
+===================================================================
+--- gcc/tree-parloops.c	(revision 192574)
++++ gcc/tree-parloops.c	(working copy)
+@@ -364,7 +364,7 @@
+    are independent on each other (that is, if we can execute them
+    in parallel).  */
+ 
+-static bool
++bool
+ loop_parallel_p (struct loop *loop, struct obstack * parloop_obstack)
+ {
+   VEC (loop_p, heap) *loop_nest;
 Index: gcc/common.opt
 ===================================================================
 --- gcc/common.opt	(revision 192574)
