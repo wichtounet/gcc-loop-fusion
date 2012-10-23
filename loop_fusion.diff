@@ -251,12 +251,11 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1186 @@
+@@ -0,0 +1,1152 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
 +#include "tree.h"
-+
 +#include "basic-block.h"
 +#include "tree-flow.h"
 +#include "tree-dump.h"
@@ -268,27 +267,29 @@ Index: gcc/tree-loop-fusion.c
 +#include "tree-pass.h"
 +#include "tree-ssa-alias.h"
 +
-+#include <iostream>
-+
 +/* 
 +   This pass performs loop fusion: for example, the loops
 +
-+   |DO I = 1, N
-+   |    A(I) = I
-+   |ENDDO
-+   
-+   |DO I = 1, N
-+   |    B(I) = A(I)
-+   |ENDDO
++   |FOR i = 1...100
++   |   A[i] = i
++   |ENDFOR
++
++   |FOR i = 1...100
++   |   B[i] = A[i]
++   |ENDFOR
 +
 +   will be transformed to
 +
-+   |DO I = 1, N
-+   |    A(I) = I
-+   |    B(I) = A(I)
-+   |ENDDO
++   |FOR i = 1...100
++   |   A[i] = i
++   |   B[i] = A[i]
++   |ENDFOR
++
++   resulting in less cache misses by iterations. 
 +
 +*/
++
++/* Defined in tree-parloops.c */
 +
 +extern bool
 +loop_parallel_p (struct loop *loop, struct obstack * parloop_obstack);
@@ -682,7 +683,7 @@ Index: gcc/tree-loop-fusion.c
 +    return false;
 +}
 +
-+/* Tries to find basic blocks to be merged */
++/* Tries to find basic blocks to merge */
 +
 +static void
 +cleanup ()
@@ -781,44 +782,6 @@ Index: gcc/tree-loop-fusion.c
 +    //TODO Verify the var of each data reference is the induction variable
 +
 +    return true;
-+}
-+
-+static inline bool
-+deep_same_data_refs_base_objects (data_reference_p a, data_reference_p b)
-+{
-+    /*print ("Compare two data references\n");
-+
-+    if (dump_file && (dump_flags & TDF_DETAILS))
-+    {
-+        dump_data_reference(dump_file, a);
-+        dump_data_reference(dump_file, b);
-+    }*/
-+
-+    /*if(dr_may_alias_p (a, b, true)){
-+        print("They may alias \n");
-+    }
-+
-+    if(TREE_CODE( DR_BASE_OBJECT (a)) == MEM_REF && TREE_CODE( DR_BASE_OBJECT (b)) == MEM_REF){
-+        tree left_a = TREE_OPERAND (DR_BASE_OBJECT (a), 0);
-+        tree left_b = TREE_OPERAND (DR_BASE_OBJECT (b), 0);
-+
-+        if(refs_may_alias_p (left_a, left_b)){
-+            print("The refs may alias \n");
-+        }
-+    }*/
-+
-+    bool same = same_data_refs_base_objects(a, b);
-+
-+    /*if(same)
-+    {
-+        print("A and B are to the same object\n");
-+    }
-+    else
-+    {
-+        print("A and B are not to the same object\n");
-+    }*/
-+
-+    return same;
 +}
 +
 +/* Returns true if loops are independent. */
@@ -944,7 +907,7 @@ Index: gcc/tree-loop-fusion.c
 +                        break;
 +                    }
 +
-+                    if (deep_same_data_refs_base_objects (ref_first, ref_next))
++                    if (same_data_refs_base_objects (ref_first, ref_next))
 +                    {
 +                        if (DR_IS_READ (ref_first) && DR_IS_READ (ref_next))
 +                        {
@@ -1143,17 +1106,19 @@ Index: gcc/tree-loop-fusion.c
 +    tree ssa_iv_name_first = get_ssa_name_iv (loop_first);
 +    tree ssa_iv_name_next = get_ssa_name_iv (loop_next);
 +
-+    tree type_iv_first = TREE_TYPE(ssa_iv_name_first);
-+    tree type_iv_next = TREE_TYPE(ssa_iv_name_next);
++    tree type_iv_first = TREE_TYPE (ssa_iv_name_first);
++    tree type_iv_next = TREE_TYPE (ssa_iv_name_next);
 +
 +    //The induction variables must be both signed or both unsigned
 +    if ((TYPE_UNSIGNED (type_iv_first) && !TYPE_UNSIGNED (type_iv_next)) 
-+            || (!TYPE_UNSIGNED (type_iv_first) && TYPE_UNSIGNED (type_iv_next))){
++            || (!TYPE_UNSIGNED (type_iv_first) && TYPE_UNSIGNED (type_iv_next)))
++    {
 +        return false;
 +    }
 +    
 +    //The induction variables must of same precision
-+    if (TYPE_PRECISION (type_iv_first) != TYPE_PRECISION (type_iv_next)){
++    if (TYPE_PRECISION (type_iv_first) != TYPE_PRECISION (type_iv_next))
++    {
 +        return false;
 +    }
 +
@@ -1161,6 +1126,8 @@ Index: gcc/tree-loop-fusion.c
 +    //the loops needs only to be independent to be fused
 +    return are_independent (loop_first, loop_next);
 +}
++
++/* Return the number of instructions in the loop header */
 +
 +static unsigned int
 +size (struct loop *loop)
@@ -1176,6 +1143,8 @@ Index: gcc/tree-loop-fusion.c
 +}
 +
 +/* Returns true if loops have a data reference in common on an array. */
++
++//TODO Certainly much better to reuse the previously computed data references rather than recomputing them
 +
 +static bool
 +have_common_array_reference (struct loop *loop_first, struct loop *loop_next)
@@ -1210,7 +1179,7 @@ Index: gcc/tree-loop-fusion.c
 +    {
 +        FOR_EACH_VEC_ELT (data_reference_p, datarefs_next, j, ref_next)
 +        {
-+            if (deep_same_data_refs_base_objects (ref_first, ref_next))
++            if (same_data_refs_base_objects (ref_first, ref_next))
 +            {
 +                //TODO Verify that it is an array
 +
@@ -1219,7 +1188,7 @@ Index: gcc/tree-loop-fusion.c
 +            }
 +        }
 +
-+        if(ret)
++        if (ret)
 +        {
 +            break;
 +        }
@@ -1349,7 +1318,8 @@ Index: gcc/tree-loop-fusion.c
 +            unsigned int index_next  = bb_stream_index (loop_next->header);
 +
 +            //Order them so that the first is before the next in the instruction stream
-+            if (index_first > index_next){
++            if (index_first > index_next)
++            {
 +                struct loop* tmp = loop_next;
 +                loop_next = loop_first;
 +                loop_first = tmp;
@@ -1364,11 +1334,7 @@ Index: gcc/tree-loop-fusion.c
 +            //Verify that the loops can be merged together
 +            if (!loops_are_mergeable (loop_first, loop_next))
 +            {
-+                if (dump_file && (dump_flags & TDF_DETAILS))
-+                {
-+                    fprintf (dump_file, "Loops %d and %d cannot be merged\n", 
-+                            loop_first->num, loop_next->num);
-+                }
++                print ("The loops cannot be merged together\n");
 +
 +                continue;
 +            }
