@@ -71,21 +71,23 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c	(revision 0)
 +++ gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c	(revision 0)
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,24 @@
 +/* { dg-do compile } */ 
 +/* { dg-options "-O2 -ftree-loop-fusion -fdump-tree-lfusion-all" } */
 +
++#define SIZE 1000
++
 +void loop(int * __restrict__ ia){
-+    unsigned int array[100];
++    unsigned int array[SIZE];
 +    unsigned int sum = 0;
 +    
 +    unsigned int i;
-+    for(i = 0; i < 100; ++i){
++    for(i = 0; i < SIZE; ++i){
 +        array[i] = i;
 +    }
 +    
 +    unsigned int j;
-+    for(j = 0; j < 100; ++j){
++    for(j = 0; j < SIZE; ++j){
 +        sum += array[j];
 +    }
 +
@@ -98,32 +100,34 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-2.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-2.c	(revision 0)
 +++ gcc/testsuite/gcc.dg/tree-ssa/lfusion-2.c	(revision 0)
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,31 @@
 +/* { dg-do compile } */ 
 +/* { dg-options "-O2 -ftree-loop-fusion -fdump-tree-lfusion-all" } */
 +
++#define SIZE 1000
++
 +void loop(int * __restrict__ ia, int * __restrict__ ib){
-+    unsigned int array1[100];
-+    unsigned int array2[100];
++    unsigned int array1[SIZE];
++    unsigned int array2[SIZE];
 +    unsigned int sum = 0;
 +    
 +    unsigned int i;
-+    for(i = 0; i < 100; ++i){
++    for(i = 0; i < SIZE; ++i){
 +        array1[i] = i;
 +    }
 +    
 +    unsigned int k;
-+    for(k = 0; k < 100; ++k){
++    for(k = 0; k < SIZE; ++k){
 +        array2[k] = array1[k];
 +    }
 +
 +    unsigned int j;
-+    for(j = 0; j < 100; ++j){
++    for(j = 0; j < SIZE; ++j){
 +        sum += array1[j];
 +    }
 +
 +    *ia = sum;
-+    *ib = array2[99];
++    *ib = array2[SIZE - 1];
 +}
 +
 +/* { dg-final { scan-tree-dump-times "Loop Fused: 2" 1 "lfusion" } } */
@@ -132,28 +136,30 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-3.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-3.c	(revision 0)
 +++ gcc/testsuite/gcc.dg/tree-ssa/lfusion-3.c	(revision 0)
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +/* { dg-do compile } */ 
 +/* { dg-options "-O2 -ftree-loop-fusion -fdump-tree-lfusion-all" } */
 +
++#define SIZE 1000
++
 +void loop(int * __restrict__ ia){
-+    unsigned int array[100];
++    unsigned int array[SIZE];
 +    unsigned int sum = 0;
 +        
 +    unsigned int i;
-+    for(i = 0; i < 100; ++i){
++    for(i = 0; i < SIZE; ++i){
 +        array[i] = i;
 +    }
 +    
 +    unsigned int j;
 +    for(j = 0; j < 10; ++j){
 +        unsigned int k;
-+        for(k = 0; k < 100; ++k){
++        for(k = 0; k < SIZE; ++k){
 +            sum += array[k];
 +        }
 +
 +        unsigned l;
-+        for(l = 0; l < 100; ++l){
++        for(l = 0; l < SIZE; ++l){
 +            sum += array[l];
 +        }
 +    }
@@ -167,37 +173,39 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-4.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-4.c	(revision 0)
 +++ gcc/testsuite/gcc.dg/tree-ssa/lfusion-4.c	(revision 0)
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +/* { dg-do compile } */ 
 +/* { dg-options "-O2 -ftree-loop-fusion -fdump-tree-lfusion-all" } */
 +
++#define SIZE 1000
++
 +void loop(int * __restrict__ ia){
-+    unsigned int array1[100];
-+    unsigned int array2[100];
-+    unsigned int array3[100];
-+    unsigned int array4[100];
++    unsigned int array1[SIZE];
++    unsigned int array2[SIZE];
++    unsigned int array3[SIZE];
++    unsigned int array4[SIZE];
 +    
 +    unsigned int i;
-+    for(i = 0; i < 100; ++i){
++    for(i = 0; i < SIZE; ++i){
 +        array1[i] = i;
 +    }
 +    
 +    unsigned int j;
-+    for(j = 0; j < 100; ++j){
++    for(j = 0; j < SIZE; ++j){
 +        array2[j] = array1[j];
 +    }
 +    
 +    unsigned int k;
-+    for(k = 0; k < 100; ++k){
++    for(k = 0; k < SIZE; ++k){
 +        array3[k] = array2[k];
 +    }
 +    
 +    unsigned int l;
-+    for(l = 0; l < 100; ++l){
++    for(l = 0; l < SIZE; ++l){
 +        array4[l] = array3[l];
 +    }
 +
-+    *ia = array4[99];
++    *ia = array4[SIZE - 1];
 +}
 +
 +/* { dg-final { scan-tree-dump-times "Loop Fused: 3" 1 "lfusion" } } */
@@ -206,26 +214,28 @@ Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-5.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-5.c	(revision 0)
 +++ gcc/testsuite/gcc.dg/tree-ssa/lfusion-5.c	(revision 0)
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,25 @@
 +/* { dg-do compile } */ 
 +/* { dg-options "-O2 -ftree-loop-fusion -fdump-tree-lfusion-all" } */
 +
++#define SIZE 1000
++
 +void loop(int * __restrict__ ia, int * __restrict__ ib){
-+    unsigned int A[100];
-+    unsigned int B[100];
++    unsigned int A[SIZE];
++    unsigned int B[SIZE];
 +    
 +    unsigned int i;
-+    for(i = 0; i < 100; ++i){
++    for(i = 0; i < SIZE; ++i){
 +        A[i] = 2;
 +    }
 +
 +    unsigned int j;
-+    for(j = 0; j < 100; ++j){
++    for(j = 0; j < SIZE; ++j){
 +        B[j] = 1 + A[j + 1];
 +    }
 +
-+    *ia = A[99];
-+    *ib = B[99];
++    *ia = A[SIZE - 1];
++    *ib = B[SIZE - 1];
 +}
 +
 +/* { dg-final { scan-tree-dump-times "Loop Fused: " 0 "lfusion" } } */
