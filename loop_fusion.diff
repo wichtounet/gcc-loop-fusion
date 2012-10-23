@@ -56,20 +56,17 @@ Index: gcc/testsuite/gfortran.dg/vect/vect.exp
  # If the target system supports vector instructions, the default action
  # for a test is 'run', otherwise it's 'compile'.  Save current default.
  # Executing vector instructions on a system without hardware vector support
-Index: gcc/testsuite/gcc.dg/autopar/autopar.exp
+Index: gcc/testsuite/gcc.dg/autopar/reduc-6.c
 ===================================================================
---- gcc/testsuite/gcc.dg/autopar/autopar.exp	(revision 192697)
-+++ gcc/testsuite/gcc.dg/autopar/autopar.exp	(working copy)
-@@ -29,6 +29,9 @@
-     set DEFAULT_CFLAGS " -ansi -pedantic-errors"
- }
+--- gcc/testsuite/gcc.dg/autopar/reduc-6.c	(revision 192697)
++++ gcc/testsuite/gcc.dg/autopar/reduc-6.c	(working copy)
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -ftree-parallelize-loops=4 -fdump-tree-parloops-details -fdump-tree-optimized" } */
++/* { dg-options "-O2 -fno-tree-loop-fusion -ftree-parallelize-loops=4 -fdump-tree-parloops-details -fdump-tree-optimized" } */
  
-+# Loop Fusion has to be disabled for the tests
-+lappend DEFAULT_CFLAGS "-fno-tree-loop-fusion"
-+
- # Initialize `dg'.
- dg-init
- 
+ #include <stdarg.h>
+ #include <stdlib.h>
 Index: gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c
 ===================================================================
 --- gcc/testsuite/gcc.dg/tree-ssa/lfusion-1.c	(revision 0)
@@ -251,7 +248,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1152 @@
+@@ -0,0 +1,1159 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -436,7 +433,8 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    tree ssa_iv_name = NULL_TREE;
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); 
++            !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        gimple stmt = gsi_stmt (gsi);
 +
@@ -461,25 +459,23 @@ Index: gcc/tree-loop-fusion.c
 +    return ssa_iv_name;
 +}
 +
-+/* Return the PHI LHS for the given SSA name in the given loop */
++/* Return the PHI Node for the given SSA name in the given loop */
 +
 +static tree 
 +get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name)
 +{
-+    tree def = NULL_TREE;
-+    
-+    for (gimple_stmt_iterator gsi = gsi_start_phis (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    for (gimple_stmt_iterator gsi = gsi_start_phis (loop->header); 
++            !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        gimple phi = gsi_stmt (gsi);
 +        
 +        if (SSA_NAME_VAR (gimple_phi_result (phi)) == SSA_NAME_VAR (ssa_iv_name))
 +        {
-+            def = gimple_phi_result (phi);
-+            break;
++            return gimple_phi_result (phi);
 +        }
 +    }
 +
-+    return def;
++    return NULL_TREE;
 +}
 +
 +/* 
@@ -494,7 +490,8 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    if (dump_file && (dump_flags & TDF_DETAILS))
 +    {
-+        fprintf (dump_file, "Fusion of A=%d and B=%d\n", loop_first->num, loop_next->num);
++        fprintf (dump_file, "Fusion of A=%d and B=%d\n", 
++                loop_first->num, loop_next->num);
 +        full_debug ("Before fusion\n");
 +    }
 +
@@ -892,7 +889,7 @@ Index: gcc/tree-loop-fusion.c
 +                //TODO Find what to do with these "NULL" references
 +                if (!ref_first || !DR_STMT (ref_first))
 +                {
-+                    print ("A and B are not independent due to unresolved dependences\n");
++                    print ("Unresolved data reference in A\n");
 +                    ret = false;
 +                    break;
 +                }
@@ -902,7 +899,7 @@ Index: gcc/tree-loop-fusion.c
 +                    //TODO Find what to do with these "NULL" references
 +                    if (!ref_next || !DR_STMT (ref_next))
 +                    {
-+                        print ("A and B are not independent due to unresolved dependences\n");
++                        print ("Unresolved data reference in B\n");
 +                        ret = false;
 +                        break;
 +                    }
@@ -1017,8 +1014,10 @@ Index: gcc/tree-loop-fusion.c
 +        return false;
 +    }
 +
-+    //The latch must be empty because the statements are not transferred to the other latch
-+    if (!gimple_seq_empty_p (bb_seq (loop->latch)) || !gimple_seq_empty_p (phi_nodes (loop->latch)))
++    //The latch must be empty because the statements 
++    //are not transferred to the other latch
++    if (!gimple_seq_empty_p (bb_seq (loop->latch)) 
++           || !gimple_seq_empty_p (phi_nodes (loop->latch)))
 +    {
 +        return false;
 +    }
@@ -1134,7 +1133,8 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    unsigned int count = 0;
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
++    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); 
++            !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        ++count;
 +    }
@@ -1144,7 +1144,8 @@ Index: gcc/tree-loop-fusion.c
 +
 +/* Returns true if loops have a data reference in common on an array. */
 +
-+//TODO Certainly much better to reuse the previously computed data references rather than recomputing them
++//TODO Certainly much better to reuse the previously computed 
++//data references rather than recomputing them
 +
 +static bool
 +have_common_array_reference (struct loop *loop_first, struct loop *loop_next)
@@ -1233,15 +1234,18 @@ Index: gcc/tree-loop-fusion.c
 +        //Fuse only loops that iterate enough times
 +        if (loop_first->nb_iterations_estimate.ult (hundred))
 +        {
-+            if (loop_outer (loop_first) || loop_outer (loop_first)->nb_iterations_estimate.ult (hundred))
++            struct loop *outer = loop_outer (loop_first);
++            if (!outer || outer->nb_iterations_estimate.ult (hundred))
 +            {
 +                return false;
 +            }
 +        }
 +
-+        //Only merge parallel/parallel or sequential/sequential loops if auto parallelization is enabled
++        //Only merge parallel/parallel or sequential/sequential loops 
++        //if auto parallelization is enabled
 +        if (flag_tree_parallelize_loops > 1 
-+                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
++                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) 
++                    || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
 +        {
 +            return false;
 +        }
