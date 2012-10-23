@@ -258,7 +258,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1159 @@
+@@ -0,0 +1,1214 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -333,6 +333,27 @@ Index: gcc/tree-loop-fusion.c
 +  int merged;
 +
 +} fusion_stats;
++
++#define EXTERNAL_STATS
++
++/* Print a message on the console if external stats are activated 
++ * and on the dump file if logging is activated. */
++
++static inline void
++print_stats (const char* message)
++{
++    if (dump_file && (dump_flags & TDF_DETAILS))
++    {
++        fprintf (dump_file, message);
++        fprintf (dump_file, "\n");
++    }
++
++#ifdef EXTERNAL_STATS
++    printf ("STAT: ");
++    printf (message);
++    printf ("\n");
++#endif
++}
 +
 +/* Print a debug message if logging is enabled */
 +
@@ -674,6 +695,7 @@ Index: gcc/tree-loop-fusion.c
 +    
 +    full_debug ("After fusion\n");
 +
++    print_stats ("Loop Fused");
 +    ++fusion_stats.fused;
 +}
 +
@@ -710,6 +732,7 @@ Index: gcc/tree-loop-fusion.c
 +                {
 +                    merge_blocks (bb, bb_next);
 +                    
++                    print_stats ("Block Merged");
 +                    ++fusion_stats.merged;
 +                }
 +            }
@@ -874,6 +897,7 @@ Index: gcc/tree-loop-fusion.c
 +        {
 +            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
 +            {
++                print_stats ("chrec_dont_know");
 +                print ("A and B are not independent due don't know relation in A\n");
 +                ret = false;
 +                break;
@@ -884,6 +908,7 @@ Index: gcc/tree-loop-fusion.c
 +        {
 +            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
 +            {
++                print_stats ("chrec_dont_know");
 +                print ("A and B are not independent due don't know relation in B\n");
 +                ret = false;
 +                break;
@@ -899,6 +924,7 @@ Index: gcc/tree-loop-fusion.c
 +                //TODO Find what to do with these "NULL" references
 +                if (!ref_first || !DR_STMT (ref_first))
 +                {
++                    print_stats ("NULL reference");
 +                    print ("Unresolved data reference in A\n");
 +                    ret = false;
 +                    break;
@@ -909,6 +935,7 @@ Index: gcc/tree-loop-fusion.c
 +                    //TODO Find what to do with these "NULL" references
 +                    if (!ref_next || !DR_STMT (ref_next))
 +                    {
++                        print_stats ("NULL reference");
 +                        print ("Unresolved data reference in B\n");
 +                        ret = false;
 +                        break;
@@ -927,6 +954,7 @@ Index: gcc/tree-loop-fusion.c
 +
 +                            if (!are_equivalent (ref_first, ref_next))
 +                            {
++                                print_stats ("blocking output-dependence");
 +                                print ("An output-dependence is blocking\n");
 +                                ret = false;
 +                            }
@@ -937,6 +965,7 @@ Index: gcc/tree-loop-fusion.c
 +
 +                            if (!are_equivalent (ref_first, ref_next))
 +                            {
++                                print_stats ("blocking anti-dependence");
 +                                print ("An anti-dependence is blocking\n");
 +                                ret = false;
 +                            }
@@ -947,6 +976,7 @@ Index: gcc/tree-loop-fusion.c
 +
 +                            if (!are_equivalent (ref_first, ref_next))
 +                            {
++                                print_stats ("blocking true-dependence");
 +                                print ("A true-dependence is blocking\n");
 +                                ret = false;
 +                            }
@@ -1000,27 +1030,31 @@ Index: gcc/tree-loop-fusion.c
 +static bool 
 +loop_is_mergeable (struct loop* loop)
 +{
++    //The algorithm only supports loops with a header and a latch
++    if (loop->num_nodes > 2)
++    {
++        print_stats ("LIMITATION: Too many blocks");
++        return false;
++    }
++
 +    //The algorithm will fail on loop with more than one exit
 +    if (!single_exit (loop))
 +    {
++        print_stats ("LIMITATION: Not single exit");
 +        return false; 
 +    }
 +
 +    //It is necessary to know the number of times a loop will iterate
 +    if (!loop->any_estimate || !loop->any_upper_bound)
 +    {
++        print_stats ("CONDITION: No estimate");
 +        return false;
 +    }
 +    
 +    //It is necessary to have a precise estimate
 +    if (loop->nb_iterations_estimate != loop->nb_iterations_upper_bound)
 +    {
-+        return false;
-+    }
-+     
-+    //The algorithm only supports loops with a header and a latch
-+    if (loop->num_nodes > 2)
-+    {
++        print_stats ("CONDITION: No precise estimate");
 +        return false;
 +    }
 +
@@ -1029,6 +1063,7 @@ Index: gcc/tree-loop-fusion.c
 +    if (!gimple_seq_empty_p (bb_seq (loop->latch)) 
 +           || !gimple_seq_empty_p (phi_nodes (loop->latch)))
 +    {
++        print_stats ("LIMITATION: Latch not empty");
 +        return false;
 +    }
 +    
@@ -1037,12 +1072,14 @@ Index: gcc/tree-loop-fusion.c
 +    //The Induction Variable is not of integer type
 +    if (TREE_CODE (TREE_TYPE (ssa_iv_name)) != INTEGER_TYPE)
 +    {
++        print_stats ("LIMITATION: IV not integer");
 +        return false;
 +    }
 +
 +    //With a NULL_TREE, we are not able to find the correct PHI node
 +    if (SSA_NAME_VAR (ssa_iv_name) == NULL_TREE)
 +    {
++        print_stats ("LIMITATION: SSA NAME NULL TREE");
 +        return false;
 +    }
 +
@@ -1051,6 +1088,7 @@ Index: gcc/tree-loop-fusion.c
 +    //The PHI node is necessary for renaming
 +    if (phi_iv == NULL_TREE)
 +    {
++        print_stats ("LIMITATION: No PHI");
 +        return false;
 +    }
 +    
@@ -1060,6 +1098,7 @@ Index: gcc/tree-loop-fusion.c
 +    //The header and the latch should be sibling in the instruction stream
 +    if (!(header->next_bb == latch || latch->next_bb == header))
 +    {
++        print_stats ("LIMITATION: Latch Header not sibling");
 +        return false;
 +    }
 +
@@ -1074,6 +1113,8 @@ Index: gcc/tree-loop-fusion.c
 +    //Both loop should iterate the same number of times
 +    if (loop_next->nb_iterations_estimate != loop_first->nb_iterations_estimate)
 +    {
++        print_stats ("CONDITION: The loop does not have the same estimate");
++
 +        return false;
 +    }
 +
@@ -1081,7 +1122,7 @@ Index: gcc/tree-loop-fusion.c
 +    unsigned int distance = distance_between_loops (loop_first, loop_next);
 +    if (distance != 1)
 +    {
-+        print ("The distance is too high\n");
++        print_stats ("LIMITATION: The distance is too high");
 +
 +        return false;
 +    }
@@ -1091,7 +1132,7 @@ Index: gcc/tree-loop-fusion.c
 +    //The two loops must be always executed together
 +    if (!single_succ_p (between_bb) || !single_pred_p (between_bb))
 +    {
-+        print ("The between block has too many predecessors or successors\n");
++        print_stats ("CONDITION: The between block can be executed alone");
 +
 +        return false;
 +    }
@@ -1099,7 +1140,7 @@ Index: gcc/tree-loop-fusion.c
 +    //Only empty block between A and B are supported
 +    if (!gimple_seq_empty_p( bb_seq( between_bb)))
 +    {
-+        print ("Too many statements in the between block\n");
++        print_stats ("LIMITATION: Too many statements in the between block");
 +
 +        return false;
 +    }
@@ -1107,7 +1148,7 @@ Index: gcc/tree-loop-fusion.c
 +    //Only empty block between A and B are supported
 +    if (!gimple_seq_empty_p( phi_nodes( between_bb)))
 +    {
-+        print ("Too many PHI nodes in the between block\n");
++        print_stats ("LIMITATION: Too many PHI nodes in the between block");
 +
 +        return false;
 +    }
@@ -1122,18 +1163,28 @@ Index: gcc/tree-loop-fusion.c
 +    if ((TYPE_UNSIGNED (type_iv_first) && !TYPE_UNSIGNED (type_iv_next)) 
 +            || (!TYPE_UNSIGNED (type_iv_first) && TYPE_UNSIGNED (type_iv_next)))
 +    {
++        print_stats ("CONDITION: The induction variables does not have corresponding signedness");
++
 +        return false;
 +    }
 +    
 +    //The induction variables must of same precision
 +    if (TYPE_PRECISION (type_iv_first) != TYPE_PRECISION (type_iv_next))
 +    {
++        print_stats ("CONDITION: The induction variables does not have corresponding precision");
++
 +        return false;
 +    }
 +
-+    //If all the other conditions are, 
-+    //the loops needs only to be independent to be fused
-+    return are_independent (loop_first, loop_next);
++    //The loops needs to be independent
++    if(!are_independent (loop_first, loop_next)){
++        print_stats ("CONDITION: The loops are not independent");
++
++        return false;
++    }
++
++    //The loops can be fused
++    return true;
 +}
 +
 +/* Return the number of instructions in the loop header */
@@ -1236,6 +1287,8 @@ Index: gcc/tree-loop-fusion.c
 +        //Do not create loops with big body
 +        if (size (loop_first) + size (loop_next) > 50)
 +        {
++            print_stats ("DECISION: Not interesting because too big");
++
 +            return false;
 +        }
 +
@@ -1247,6 +1300,8 @@ Index: gcc/tree-loop-fusion.c
 +            struct loop *outer = loop_outer (loop_first);
 +            if (!outer || outer->nb_iterations_estimate.ult (hundred))
 +            {
++                print_stats ("DECISION: Not interesting because too small iterates");
++
 +                return false;
 +            }
 +        }
@@ -1257,12 +1312,16 @@ Index: gcc/tree-loop-fusion.c
 +                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) 
 +                    || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
 +        {
++            print_stats ("DECISION: Not interesting because of autopar");
++
 +            return false;
 +        }
 +
 +        //Try to predict cache misses
 +        if ((!have_common_array_reference (loop_first, loop_next)))
 +        {
++            print_stats ("DECISION: Not interesting because no common array reference");
++
 +            return false;
 +        }
 +    }
@@ -1280,7 +1339,7 @@ Index: gcc/tree-loop-fusion.c
 +    {
 +        return 0;
 +    }
-+
++    
 +    //Initialize the stats
 +    memset (&fusion_stats, 0, sizeof (fusion_stats));
 +   
@@ -1300,11 +1359,7 @@ Index: gcc/tree-loop-fusion.c
 +        //The algorithm cannot merge all loops
 +        if (!loop_is_mergeable (loop_first))
 +        {
-+            if (dump_file && (dump_flags & TDF_DETAILS))
-+            {
-+                fprintf (dump_file, "Loop %d cannot be merged\n", 
-+                        loop_first->num);
-+            }
++            print_stats ("Loop A not mergeable");
 +
 +            continue;
 +        }
@@ -1319,11 +1374,7 @@ Index: gcc/tree-loop-fusion.c
 +            //The algorithm cannot merge all loops
 +            if (!loop_is_mergeable (loop_next))
 +            {
-+                if (dump_file && (dump_flags & TDF_DETAILS))
-+                {
-+                    fprintf (dump_file, "Loop %d cannot be merged\n", 
-+                            loop_next->num);
-+                }
++                print_stats ("Loop B not mergeable");
 +
 +                continue;
 +            }
@@ -1348,7 +1399,7 @@ Index: gcc/tree-loop-fusion.c
 +            //Verify that the loops can be merged together
 +            if (!loops_are_mergeable (loop_first, loop_next))
 +            {
-+                print ("The loops cannot be merged together\n");
++                print_stats ("Loops cannot be merged together");
 +
 +                continue;
 +            }
@@ -1361,6 +1412,10 @@ Index: gcc/tree-loop-fusion.c
 +                //The cleanup remove empty basic blocks 
 +                //to make further loop fusion possible
 +                cleanup();
++            }
++            else 
++            {
++                print_stats ("Loops are not interesting to merge");
 +            }
 +        }
 +    }
