@@ -843,7 +843,7 @@ Index: gcc/tree-loop-fusion.c
 +
 +    if (!success)
 +    {
-+        print ("Data dependence analysis failed\n");
++        print_stats ("Data dependence analysis failed");
 +    }
 +    else
 +    {
