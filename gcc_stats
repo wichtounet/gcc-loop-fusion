@@ -1,0 +1,18 @@
+2 STAT: blocking true-dependence
+1 STAT: chrec_dont_know
+11186 STAT: CONDITION: No estimate
+88 STAT: CONDITION: No precise estimate
+363 STAT: CONDITION: The loop does not have the same estimate
+3 STAT: CONDITION: The loops are not independent
+20 STAT: LIMITATION: IV not integer
+421 STAT: LIMITATION: Latch Header not sibling
+800 STAT: LIMITATION: Latch not empty
+562 STAT: LIMITATION: No PHI
+71 STAT: LIMITATION: Not single exit
+402 STAT: LIMITATION: SSA NAME NULL TREE
+69 STAT: LIMITATION: The distance is too high
+34458 STAT: LIMITATION: Too many blocks
+138 STAT: LIMITATION: Too many statements in the between block
+47642 STAT: Loop A not mergeable
+366 STAT: Loop B not mergeable
+573 STAT: Loops cannot be merged together
