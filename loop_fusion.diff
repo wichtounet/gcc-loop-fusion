@@ -258,7 +258,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1214 @@
+@@ -0,0 +1,1240 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -814,6 +814,23 @@ Index: gcc/tree-loop-fusion.c
 +    return true;
 +}
 +
++static bool
++check_chrec_dont_know (VEC (ddr_p, heap) *relations)
++{
++    ddr_p ddr;
++    unsigned int i;
++
++    FOR_EACH_VEC_ELT (ddr_p, relations, i, ddr)
++    {
++        if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
++        {
++            return false;
++        }
++    }
++
++    return true;
++}
++
 +/* Returns true if loops are independent. */
 +
 +static bool
@@ -891,28 +908,17 @@ Index: gcc/tree-loop-fusion.c
 +            dump_data_dependence_relations (dump_file, dependence_relations_next);
 +        }
 +        
-+        ddr_p ddr;
-+
-+        FOR_EACH_VEC_ELT (ddr_p, dependence_relations_first, i, ddr)
++        if (!check_chrec_dont_know (dependence_relations_first))
 +        {
-+            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
-+            {
-+                print_stats ("chrec_dont_know");
-+                print ("A and B are not independent due don't know relation in A\n");
-+                ret = false;
-+                break;
-+            }
++            print_stats ("chrec_dont_know");
++            print ("Loops are dependent due to a chrec_dont_know in A\n");
++            ret = false;
 +        }
-+        
-+        FOR_EACH_VEC_ELT (ddr_p, dependence_relations_next, i, ddr)
++        else if (!check_chrec_dont_know (dependence_relations_next))
 +        {
-+            if (DDR_ARE_DEPENDENT (ddr) == chrec_dont_know)
-+            {
-+                print_stats ("chrec_dont_know");
-+                print ("A and B are not independent due don't know relation in B\n");
-+                ret = false;
-+                break;
-+            }
++            print_stats ("chrec_dont_know");
++            print ("Loops are dependent due to a chrec_dont_know in B\n");
++            ret = false;
 +        }
 +
 +        //Only if there are no "don't know" data dependence relations
@@ -947,38 +953,41 @@ Index: gcc/tree-loop-fusion.c
 +                        {
 +                            print ("Found an input-dependence\n");
 +                            //Input reference can be ignored
-+                        } 
-+                        else if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_next))
++                        }
++                        else 
 +                        {
-+                            print ("Found an output-dependence\n");
-+
-+                            if (!are_equivalent (ref_first, ref_next))
++                            if (DR_IS_WRITE (ref_first) && DR_IS_WRITE (ref_next))
 +                            {
-+                                print_stats ("blocking output-dependence");
-+                                print ("An output-dependence is blocking\n");
-+                                ret = false;
-+                            }
-+                        } 
-+                        else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_next))
-+                        {
-+                            print ("Found an anti-dependence\n");
++                                print ("Found an output-dependence\n");
 +
-+                            if (!are_equivalent (ref_first, ref_next))
++                                if (!are_equivalent (ref_first, ref_next))
++                                {
++                                    print_stats ("blocking output-dependence");
++                                    print ("An output-dependence is blocking\n");
++                                    ret = false;
++                                }
++                            } 
++                            else if (DR_IS_READ (ref_first) && DR_IS_WRITE (ref_next))
 +                            {
-+                                print_stats ("blocking anti-dependence");
-+                                print ("An anti-dependence is blocking\n");
-+                                ret = false;
-+                            }
-+                        } 
-+                        else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_next))
-+                        {
-+                            print ("Found a true-dependence\n");
++                                print ("Found an anti-dependence\n");
 +
-+                            if (!are_equivalent (ref_first, ref_next))
++                                if (!are_equivalent (ref_first, ref_next))
++                                {
++                                    print_stats ("blocking anti-dependence");
++                                    print ("An anti-dependence is blocking\n");
++                                    ret = false;
++                                }
++                            } 
++                            else if (DR_IS_WRITE (ref_first) && DR_IS_READ (ref_next))
 +                            {
-+                                print_stats ("blocking true-dependence");
-+                                print ("A true-dependence is blocking\n");
-+                                ret = false;
++                                print ("Found a true-dependence\n");
++
++                                if (!are_equivalent (ref_first, ref_next))
++                                {
++                                    print_stats ("blocking true-dependence");
++                                    print ("A true-dependence is blocking\n");
++                                    ret = false;
++                                }
 +                            }
 +                        }
 +                    }
@@ -1145,12 +1154,29 @@ Index: gcc/tree-loop-fusion.c
 +        return false;
 +    }
 +
-+    //Only empty block between A and B are supported
-+    if (!gimple_seq_empty_p( phi_nodes( between_bb)))
++    //The between block can contains PHI nodes 
++    //if they are not used in the second loop
++    for (gimple_stmt_iterator gsi = gsi_start_phis (between_bb); 
++            !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
-+        print_stats ("LIMITATION: Too many PHI nodes in the between block");
++        gimple phi = gsi_stmt (gsi);
++        tree ssa_name = gimple_phi_result (phi);
++       
++        use_operand_p imm_use_p;
++        imm_use_iterator iterator;
 +
-+        return false;
++        FOR_EACH_IMM_USE_FAST (imm_use_p, iterator, ssa_name)
++        {
++            gimple use_stmt = USE_STMT (imm_use_p);
++            basic_block use_block = gimple_bb (use_stmt);
++
++            if (use_block == loop_next->header || use_block == loop_next->latch)
++            {
++                print_stats ("LIMITATION: A PHI node in between block is used");
++
++                return false;
++            }
++        }
 +    }
 +    
 +    tree ssa_iv_name_first = get_ssa_name_iv (loop_first);
