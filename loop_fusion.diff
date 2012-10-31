@@ -704,7 +704,7 @@ Index: gcc/tree-loop-fusion.c
 +static bool
 +dirty (basic_block bb)
 +{
-+    if (gimple_seq_empty_p (bb_seq (bb)) && gimple_seq_empty_p (phi_nodes (bb)))
++    if (gimple_seq_empty_p (bb_seq (bb)))
 +    {
 +        return single_succ_p (bb) && single_pred_p (bb);
 +    }
