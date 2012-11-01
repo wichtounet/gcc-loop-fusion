@@ -1,7 +1,7 @@
 #include <iostream>
 
 static const unsigned long SIZE = 20000000L;
-static const unsigned long REPEAT = 10L;
+static const unsigned long REPEAT = 25L;
 
 static unsigned long A[SIZE];
 static unsigned long B[SIZE];
