@@ -30,27 +30,48 @@ function compute() {
     mean_avg=$(echo ${cnt}/${#samples[@]} | bc -l)
     mean_avg=$(echo ${mean_avg} | cut -b1-6)
 
-    printf " %s" ${mean_avg}
+    printf " %s" ${mean_avg} | tee -a $1
 }
 
+repeat=1
+
 function run_time() {
-    for i in {1..10}
+    for i in {1..$repeat}
     do
         /usr/bin/time -p -a -o times.log ./a.out > /dev/null
     done
 
-    compute
+    compute $1
     rm times.log
 }
 
-function bench() {
-    printf "%d" $1
-    ../gcc-trunk-install/bin/g++ -fno-tree-loop-fusion -O2 $2 > /dev/null
-    run_time
-    ../gcc-trunk-install/bin/g++ -O2 $2 > /dev/null
-    run_time
-    print "\n"
+function misses() {
+    sudo perf stat -r $repeat -e "cache-misses" --log-fd=1 ./a.out | tail -n 4 | head -n 1 | awk '{print $1}' | sed 's/,//g' | tee -a $1
 }
+
+function bench() {
+    printf "%d" $1 | tee -a fusion_1.dat
+    printf "%d" $1 | tee -a fusion_2.dat
+    
+    printf "%d " $1 | tee -a fusion_misses_1.dat
+    printf "%d " $1 | tee -a fusion_misses_2.dat
+
+    ../gcc-trunk-install/bin/g++ -fno-tree-loop-fusion -O2 -march=native $2 > /dev/null
+    run_time fusion_1.dat
+    misses fusion_misses_1.dat
+    ../gcc-trunk-install/bin/g++ -O2 -march=native $2 > /dev/null
+    run_time fusion_2.dat
+    misses fusion_misses_2.dat
+
+    printf "\n" | tee -a fusion_1.dat
+    printf "\n" | tee -a fusion_2.dat
+}
+
+rm -f fusion_1.dat
+rm -f fusion_2.dat
+
+rm -f fusion_misses_1.dat
+rm -f fusion_misses_2.dat
 
 bench 1 bench_read_read.cpp
 bench 2 bench_read_write.cpp

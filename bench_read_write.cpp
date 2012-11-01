@@ -1,6 +1,6 @@
 #include <iostream>
 
-static const unsigned long SIZE = 20000000L;
+static const unsigned long SIZE = 40000000L;
 static const unsigned long REPEAT = 25L;
 
 static unsigned long A[SIZE];

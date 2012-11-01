@@ -4,3 +4,4 @@ a.out
 *.s
 *.swp
 *.o
+*.dat
