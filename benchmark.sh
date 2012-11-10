@@ -82,3 +82,4 @@ bench 4 bench_write_read.cpp
 bench 5 bench_crossed.cpp
 bench 6 bench_mixed.cpp
 bench 7 bench_copies.cpp
+bench 8 bench_dummy_2000.cpp
