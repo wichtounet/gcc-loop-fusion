@@ -1302,45 +1302,54 @@ Index: gcc/tree-loop-fusion.c
 +static bool
 +loops_are_interesting_to_merge (struct loop *loop_first, struct loop *loop_next)
 +{
-+    //Do not create loops with big body
-+    if (size (loop_first) + size (loop_next) > 50)
-+    {
-+        print_stats ("DECISION: Not interesting because too big");
++    bool profile = false;
 +
-+        return false;
++    if (profile)
++    {
++        //TODO
 +    }
-+
-+    double_int hundred = double_int::from_uhwi(100u);
-+
-+    //Fuse only loops that iterate enough times
-+    if (loop_first->nb_iterations_estimate.ult (hundred))
++    else 
 +    {
-+        struct loop *outer = loop_outer (loop_first);
-+        if (!outer || outer->nb_iterations_estimate.ult (hundred))
++        //Do not create loops with big body
++        if (size (loop_first) + size (loop_next) > 50)
 +        {
-+            print_stats ("DECISION: Not interesting because too small iterates");
++            print_stats ("DECISION: Not interesting because too big");
 +
 +            return false;
 +        }
-+    }
 +
-+    //Only merge parallel/parallel or sequential/sequential loops 
-+    //if auto parallelization is enabled
-+    if (flag_tree_parallelize_loops > 1 
-+            && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) 
-+                || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
-+    {
-+        print_stats ("DECISION: Not interesting because of autopar");
++        double_int hundred = double_int::from_uhwi(100u);
 +
-+        return false;
-+    }
++        //Fuse only loops that iterate enough times
++        if (loop_first->nb_iterations_estimate.ult (hundred))
++        {
++            struct loop *outer = loop_outer (loop_first);
++            if (!outer || outer->nb_iterations_estimate.ult (hundred))
++            {
++                print_stats ("DECISION: Not interesting because too small iterates");
 +
-+    //Try to predict cache misses
-+    if ((!have_common_array_reference (loop_first, loop_next)))
-+    {
-+        print_stats ("DECISION: Not interesting because no common array reference");
++                return false;
++            }
++        }
 +
-+        return false;
++        //Only merge parallel/parallel or sequential/sequential loops 
++        //if auto parallelization is enabled
++        if (flag_tree_parallelize_loops > 1 
++                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) 
++                    || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
++        {
++            print_stats ("DECISION: Not interesting because of autopar");
++
++            return false;
++        }
++
++        //Try to predict cache misses
++        if ((!have_common_array_reference (loop_first, loop_next)))
++        {
++            print_stats ("DECISION: Not interesting because no common array reference");
++
++            return false;
++        }
 +    }
 +
 +    return true;
