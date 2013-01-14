@@ -1302,11 +1302,16 @@ Index: gcc/tree-loop-fusion.c
 +static bool
 +loops_are_interesting_to_merge (struct loop *loop_first, struct loop *loop_next)
 +{
-+    bool profile = false;
-+
-+    if (profile)
++    if (flag_auto_profile)
 +    {
-+        //TODO
++        long first_misses = 
++              loop_first->header->cache_misses
++            + loop_first->latch->cache_misses;
++        long next_misses = 
++              loop_next->header->cache_misses
++            + loop_next->latch->cache_misses;
++         
++        //TODO Test if first_misses ~= next_misses and both are high
 +    }
 +    else 
 +    {
