@@ -253,12 +253,12 @@ Index: gcc/testsuite/gcc.dg/vect/vect.exp
 +
  # Initialize `dg'.
  dg-init
- 
+
 Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
-+++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1240 @@
++++ gcc/tree-loop-fusion.c	(working copy)
+@@ -0,0 +1,1245 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"
@@ -304,7 +304,7 @@ Index: gcc/tree-loop-fusion.c
 +/* Return true if a loop is parallel. */
 +
 +static bool
-+loop_parallel_p (struct loop* loop)
++parallel_p (struct loop* loop)
 +{
 +    struct obstack parloop_obstack;
 +    gcc_obstack_init (&parloop_obstack);
@@ -321,7 +321,7 @@ Index: gcc/tree-loop-fusion.c
 +static bool
 +loop_sequential_p (struct loop* loop)
 +{
-+    return !loop_parallel_p(loop);
++    return !parallel_p(loop);
 +}
 +
 +static struct
@@ -464,8 +464,8 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    tree ssa_iv_name = NULL_TREE;
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); 
-+            !gsi_end_p (gsi); gsi_next (&gsi))
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        gimple stmt = gsi_stmt (gsi);
 +
@@ -495,7 +495,8 @@ Index: gcc/tree-loop-fusion.c
 +static tree 
 +get_phi_var_for_iv(struct loop *loop, tree ssa_iv_name)
 +{
-+    for (gimple_stmt_iterator gsi = gsi_start_phis (loop->header); 
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_phis (loop->header); 
 +            !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        gimple phi = gsi_stmt (gsi);
@@ -550,8 +551,8 @@ Index: gcc/tree-loop-fusion.c
 +    edge new_entry_edge = loop_preheader_edge (loop_first);
 +    edge new_latch_edge = loop_latch_edge (loop_first);
 +    
-+    for (gimple_stmt_iterator gsi = gsi_start_phis (loop_next->header); 
-+            !gsi_end_p (gsi); )
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_phis (loop_next->header); !gsi_end_p (gsi); )
 +    {
 +        gimple phi_orig = gsi_stmt (gsi);
 +        tree result = gimple_phi_result ( phi_orig);
@@ -592,8 +593,7 @@ Index: gcc/tree-loop-fusion.c
 +    gimple_stmt_iterator gsi_first_last = gsi_last_bb (loop_first->header);
 +    gsi_prev (&gsi_first_last);
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop_next->header); 
-+            !gsi_end_p (gsi);)
++    for (gsi = gsi_start_bb (loop_next->header); !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt (gsi);
 +
@@ -640,7 +640,7 @@ Index: gcc/tree-loop-fusion.c
 +    single_succ_edge (header_next)->flags &= ~EDGE_FALSE_VALUE;
 +    
 +    //Remove the condition from the old loop header
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (header_next); !gsi_end_p (gsi);)
++    for (gsi = gsi_start_bb (header_next); !gsi_end_p (gsi);)
 +    {
 +        gimple stmt = gsi_stmt (gsi);
 +
@@ -1061,7 +1061,7 @@ Index: gcc/tree-loop-fusion.c
 +    }
 +    
 +    //It is necessary to have a precise estimate
-+    if (loop->nb_iterations_estimate != loop->nb_iterations_upper_bound)
++    if (double_int_ucmp (loop->nb_iterations_estimate, loop->nb_iterations_upper_bound) != 0)
 +    {
 +        print_stats ("CONDITION: No precise estimate");
 +        return false;
@@ -1120,7 +1120,7 @@ Index: gcc/tree-loop-fusion.c
 +loops_are_mergeable (struct loop *loop_first, struct loop *loop_next)
 +{
 +    //Both loop should iterate the same number of times
-+    if (loop_next->nb_iterations_estimate != loop_first->nb_iterations_estimate)
++    if (double_int_ucmp (loop_next->nb_iterations_estimate, loop_first->nb_iterations_estimate) != 0)
 +    {
 +        print_stats ("CONDITION: The loop does not have the same estimate");
 +
@@ -1156,8 +1156,8 @@ Index: gcc/tree-loop-fusion.c
 +
 +    //The between block can contains PHI nodes 
 +    //if they are not used in the second loop
-+    for (gimple_stmt_iterator gsi = gsi_start_phis (between_bb); 
-+            !gsi_end_p (gsi); gsi_next (&gsi))
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_phis (between_bb); !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        gimple phi = gsi_stmt (gsi);
 +        tree ssa_name = gimple_phi_result (phi);
@@ -1220,8 +1220,8 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    unsigned int count = 0;
 +
-+    for (gimple_stmt_iterator gsi = gsi_start_bb (loop->header); 
-+            !gsi_end_p (gsi); gsi_next (&gsi))
++    gimple_stmt_iterator gsi;
++    for (gsi = gsi_start_bb (loop->header); !gsi_end_p (gsi); gsi_next (&gsi))
 +    {
 +        ++count;
 +    }
@@ -1323,13 +1323,13 @@ Index: gcc/tree-loop-fusion.c
 +            return false;
 +        }
 +
-+        double_int hundred = double_int::from_uhwi(100u);
++        double_int hundred = uhwi_to_double_int(100u);
 +
 +        //Fuse only loops that iterate enough times
-+        if (loop_first->nb_iterations_estimate.ult (hundred))
++        if (double_int_ucmp (loop_first->nb_iterations_estimate, hundred) < 0)
 +        {
 +            struct loop *outer = loop_outer (loop_first);
-+            if (!outer || outer->nb_iterations_estimate.ult (hundred))
++            if (!outer || double_int_ucmp (outer->nb_iterations_estimate, hundred) < 0)
 +            {
 +                print_stats ("DECISION: Not interesting because too small iterates");
 +
@@ -1340,8 +1340,8 @@ Index: gcc/tree-loop-fusion.c
 +        //Only merge parallel/parallel or sequential/sequential loops 
 +        //if auto parallelization is enabled
 +        if (flag_tree_parallelize_loops > 1 
-+                && ((loop_parallel_p (loop_first) && loop_sequential_p (loop_next)) 
-+                    || ( loop_sequential_p (loop_first) && loop_parallel_p (loop_next))))
++                && ((parallel_p (loop_first) && loop_sequential_p (loop_next)) 
++                    || ( loop_sequential_p (loop_first) && parallel_p (loop_next))))
 +        {
 +            print_stats ("DECISION: Not interesting because of autopar");
 +
@@ -1455,7 +1455,7 @@ Index: gcc/tree-loop-fusion.c
 +    if (fusion_stats.fused > 0)
 +    {
 +        //The merging strategy does not take virtual operands into account
-+        mark_virtual_operands_for_renaming (cfun);
++        //mark_virtual_operands_for_renaming (cfun);
 +
 +        //Make sure the function is transformed in LCSSA
 +        rewrite_into_loop_closed_ssa (NULL, TODO_update_ssa);
@@ -1500,30 +1500,30 @@ Index: gcc/tree-loop-fusion.c
 +        0,                              /* properties_destroyed */
 +        0,                              /* todo_flags_start */
 +        TODO_update_ssa                 /* todo_flags_finish */ 
-+      | TODO_verify_ssa
-+      /*| TODO_rebuild_frequencies*/,   
++      	| TODO_verify_ssa
++      	/*| TODO_rebuild_frequencies*/,   
 +    }
 +};
 Index: gcc/opts.c
 ===================================================================
---- gcc/opts.c	(revision 192697)
+--- gcc/opts.c	(revision 194505)
 +++ gcc/opts.c	(working copy)
-@@ -487,6 +487,7 @@
+@@ -486,6 +486,7 @@
+     { OPT_LEVELS_2_PLUS, OPT_falign_labels, NULL, 1 },
+     { OPT_LEVELS_2_PLUS, OPT_falign_functions, NULL, 1 },
      { OPT_LEVELS_2_PLUS, OPT_ftree_tail_merge, NULL, 1 },
-     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_foptimize_strlen, NULL, 1 },
-     { OPT_LEVELS_2_PLUS, OPT_fhoist_adjacent_loads, NULL, 1 },
 +    { OPT_LEVELS_2_PLUS, OPT_ftree_loop_fusion, NULL, 1 },
+     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_foptimize_strlen, NULL, 1 },
  
      /* -O3 optimizations.  */
-     { OPT_LEVELS_3_PLUS, OPT_ftree_loop_distribute_patterns, NULL, 1 },
 Index: gcc/timevar.def
 ===================================================================
---- gcc/timevar.def	(revision 192697)
+--- gcc/timevar.def	(revision 194505)
 +++ gcc/timevar.def	(working copy)
 @@ -171,6 +171,7 @@
- DEFTIMEVAR (TV_GRAPHITE_TRANSFORMS   , "Graphite loop transforms")
  DEFTIMEVAR (TV_GRAPHITE_DATA_DEPS    , "Graphite data dep analysis")
  DEFTIMEVAR (TV_GRAPHITE_CODE_GEN     , "Graphite code generation")
+ DEFTIMEVAR (TV_TREE_LINEAR_TRANSFORM , "tree loop linear")
 +DEFTIMEVAR (TV_TREE_LOOP_FUSION      , "tree loop fusion")
  DEFTIMEVAR (TV_TREE_LOOP_DISTRIBUTION, "tree loop distribution")
  DEFTIMEVAR (TV_CHECK_DATA_DEPS       , "tree check data dependences")
@@ -1558,20 +1558,20 @@ Index: gcc/common.opt
  Enable loop distribution on trees
 Index: gcc/Makefile.in
 ===================================================================
---- gcc/Makefile.in	(revision 192697)
+--- gcc/Makefile.in	(revision 194505)
 +++ gcc/Makefile.in	(working copy)
-@@ -1357,6 +1357,7 @@
- 	tree-inline.o \
+@@ -1379,6 +1379,7 @@
  	tree-into-ssa.o \
  	tree-iterator.o \
-+    tree-loop-fusion.o \
  	tree-loop-distribution.o \
++	tree-loop-fusion.o \
  	tree-nested.o \
  	tree-nomudflap.o \
-@@ -2579,6 +2580,11 @@
-    dumpfile.h $(TM_H) $(GGC_H) $(TREE_H) $(TREE_FLOW_H) \
-    $(CFGLOOP_H) $(TREE_PASS_H) $(TREE_VECTORIZER_H) \
-    $(TREE_PRETTY_PRINT_H)
+ 	tree-nrv.o \
+@@ -2694,6 +2695,11 @@
+    $(TM_H) $(GGC_H) $(TREE_H) $(DIAGNOSTIC_H) $(TREE_FLOW_H) $(TREE_DUMP_H) \
+    $(CFGLOOP_H) $(TREE_PASS_H) $(TREE_VECTORIZER_H) $(TIMEVAR_H) \
+    tree-pretty-print.h
 +tree-loop-fusion.o: tree-loop-fusion.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
 +   $(TM_H) $(GGC_H) $(OPTABS_H) $(TREE_H) $(RTL_H) $(BASIC_BLOCK_H) \
 +   $(DIAGNOSTIC_H) $(TREE_FLOW_H) $(TREE_DUMP_H) $(TIMEVAR_H) $(CFGLOOP_H) \
