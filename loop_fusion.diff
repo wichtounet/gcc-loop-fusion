@@ -258,7 +258,7 @@ Index: gcc/tree-loop-fusion.c
 ===================================================================
 --- gcc/tree-loop-fusion.c	(revision 0)
 +++ gcc/tree-loop-fusion.c	(revision 0)
-@@ -0,0 +1,1240 @@
+@@ -0,0 +1,1231 @@
 +#include "config.h"
 +#include "system.h"
 +#include "coretypes.h"

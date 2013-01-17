@@ -1,0 +1,215 @@
+Index: gcc/auto-profile.c
+===================================================================
+--- gcc/auto-profile.c	(revision 194505)
++++ gcc/auto-profile.c	(working copy)
+@@ -111,6 +111,7 @@
+   gcov_unsigned_t size;
+   gcov_type num_inst;
+   gcov_type count;
++  gcov_type cache_misses;
+   gcov_type max_count;
+ };
+ 
+@@ -819,17 +820,18 @@
+     afdo_propagate_copy_scale (e, stack);
+ }
+ 
+-/* For a given POS_STACK with SIZE, get the COUNT/NUM_INST info for the
+-   inline stack. If CALLEE_NAME is non-null, the COUNT represents the
+-   total count in the inline stack. Otherwise, the COUNT represents the
+-   count of an ordinary statement. Return FALSE if profile is not found
+-   for the given POS_STACK.  */
++/* For a given POS_STACK with SIZE, get the COUNT/NUM_INST/CACHE_MISSES 
++   info for the inline stack. If CALLEE_NAME is non-null, the COUNT 
++   represents the total count in the inline stack. Otherwise, the COUNT 
++   represents the count of an ordinary statement. Return FALSE if 
++   profile is not found for the given POS_STACK.  */
+ 
+ static bool
+ get_stack_count (struct gcov_callsite_pos *pos_stack,
+ 		 const char *callee_name,
+ 		 int size,
+-		 gcov_type *count, gcov_type *max_count, gcov_type *num_inst)
++		 gcov_type *count, gcov_type *max_count, gcov_type *num_inst, 
++		 gcov_type *cache_misses)
+ {
+   int i;
+ 
+@@ -847,6 +849,7 @@
+ 	    {
+ 	      *count = entry->count;
+ 	      *num_inst = entry->num_inst;
++	      *cache_misses = entry->cache_misses;
+ 	      if (max_count)
+ 		*max_count = entry->max_count;
+ 	      return true;
+@@ -865,6 +868,7 @@
+ 		  *count = entry->count * scale_entry->count
+ 			   / REG_BR_PROB_BASE;
+ 		  *num_inst = entry->num_inst;
++		  *cache_misses = entry->cache_misses;
+ 		  if (max_count)
+ 		    *max_count = entry->max_count;
+ 		  return true;
+@@ -874,16 +878,17 @@
+     }
+   *count = 0;
+   *num_inst = 0;
++  *cache_misses = 0;
+   if (max_count)
+     *max_count = 0;
+   return false;
+ }
+ 
+-/* For a given STMT, get the COUNT and NUM_INST from its profile.
++/* For a given STMT, get the COUNT, NUM_INST and CACHE_MISSES from its profile.
+    Return FALSE if profile is not found for STMT.  */
+ 
+ static bool
+-get_stmt_count (gimple stmt, gcov_type *count, gcov_type *num_inst)
++get_stmt_count (gimple stmt, gcov_type *count, gcov_type *num_inst, gcov_type *cache_misses)
+ {
+   struct gcov_callsite_pos *pos_stack;
+   int size;
+@@ -901,7 +906,7 @@
+ 
+   get_inline_stack_by_stmt (stmt, current_function_decl, pos_stack, true);
+ 
+-  return get_stack_count (pos_stack, NULL, size, count, NULL, num_inst);
++  return get_stack_count (pos_stack, NULL, size, count, NULL, num_inst, cache_misses);
+ }
+ 
+ /* For a given EDGE, if IS_TOTAL is true, save EDGE->callee's total count
+@@ -912,7 +917,7 @@
+ 			 gcov_type *max_count, bool is_total)
+ {
+   struct gcov_callsite_pos *pos_stack;
+-  gcov_type num_inst;
++  gcov_type num_inst, cache_misses;
+   const char *callee_name = is_total ?
+       IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (edge->callee->decl)) : NULL;
+   int size = get_inline_stack_size_by_edge (edge);
+@@ -929,7 +934,7 @@
+ 	get_discriminator_from_locus(gimple_location(edge->call_stmt));
+ 
+   return get_stack_count (pos_stack, callee_name,
+-			  size, count, max_count, &num_inst);
++			  size, count, max_count, &num_inst, &cache_misses);
+ }
+ 
+ /* For a given BB, return its execution count.  */
+@@ -943,9 +948,9 @@
+ 
+   for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+     {
+-      gcov_type count, num_inst;
++      gcov_type count, num_inst, cache_misses;
+       gimple stmt = gsi_stmt (gsi);
+-      if (get_stmt_count (stmt, &count, &num_inst))
++      if (get_stmt_count (stmt, &count, &num_inst, &cache_misses))
+ 	{
+ 	  if (count > max_count)
+ 	    max_count = count;
+@@ -961,6 +966,27 @@
+     return 0;
+ }
+ 
++/* For a given BB, return its number of cache misses.  */
++
++gcov_type
++afdo_get_bb_cache_misses (basic_block bb)
++{
++    gimple_stmt_iterator gsi;
++    gcov_type cache_misses_sum = 0;
++
++    for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
++    {
++        gcov_type count, num_inst, cache_misses;
++        
++        if (get_stmt_count (gsi_stmt (gsi), &count, &num_inst, &cache_misses))
++        {
++            cache_misses_sum += cache_misses;
++        }
++    }
++
++    return cache_misses_sum;
++}
++
+ /* Annotate auto profile to the control flow graph.  */
+ 
+ static void
+@@ -972,6 +998,7 @@
+   FOR_EACH_BB (bb)
+     {
+       bb->count = afdo_get_bb_count (bb);
++      bb->cache_misses = afdo_get_bb_cache_misses (bb);
+       if (bb->count > max_count)
+ 	max_count = bb->count;
+     }
+@@ -1075,6 +1102,7 @@
+ 	    }
+ 	  gcov_functions[i].stacks[j].count = gcov_read_counter ();
+ 	  gcov_functions[i].stacks[j].num_inst = gcov_read_counter ();
++	  gcov_functions[i].stacks[j].cache_misses = gcov_read_counter ();
+ 	}
+     }
+ 
+@@ -1176,6 +1204,7 @@
+ 	  unsigned k;
+ 	  unsigned stack_size = func->stacks[j].size;
+ 	  gcov_type count = func->stacks[j].count;
++	  gcov_type cache_misses = func->stacks[j].cache_misses;
+ 	  struct gcov_stack **stack_slot = (struct gcov_stack **)
+ 		  htab_find_slot (stack_htab, func->stacks + j, INSERT);
+ 	  if (func->stacks[j].num_inst && count > afdo_profile_info->sum_max)
+@@ -1183,6 +1212,7 @@
+ 	  if (*stack_slot)
+ 	    {
+ 	      (*stack_slot)->count += count;
++	      (*stack_slot)->cache_misses += cache_misses;
+ 	      if ((*stack_slot)->num_inst < func->stacks[j].num_inst)
+ 		(*stack_slot)->num_inst = func->stacks[j].num_inst;
+ 	    }
+@@ -1199,6 +1229,7 @@
+ 	      new_stack->size = k;
+ 	      new_stack->num_inst = 0;
+ 	      new_stack->count = 0;
++	      new_stack->cache_misses = 0;
+ 	      new_stack->max_count = 0;
+ 	      stack_slot = (struct gcov_stack **)
+ 		  htab_find_slot (stack_htab, new_stack, INSERT);
+@@ -1207,6 +1238,7 @@
+ 	      else
+ 		free (new_stack);
+ 	      (*stack_slot)->count += count;
++	      (*stack_slot)->cache_misses += cache_misses;
+ 	      if ((*stack_slot)->max_count < count)
+ 		(*stack_slot)->max_count = count;
+ 	    }
+Index: gcc/auto-profile.h
+===================================================================
+--- gcc/auto-profile.h	(revision 194505)
++++ gcc/auto-profile.h	(working copy)
+@@ -44,4 +44,8 @@
+ 
+ /* Calculate basic block count.  */
+ extern gcov_type afdo_get_bb_count (basic_block);
++
++/* Calculate basic block cache misses.  */
++extern gcov_type afdo_get_bb_cache_misses (basic_block);
++
+ #endif /* AUTO_PROFILE_H */
+Index: gcc/basic-block.h
+===================================================================
+--- gcc/basic-block.h	(revision 194505)
++++ gcc/basic-block.h	(working copy)
+@@ -167,6 +167,9 @@
+   /* Expected number of executions: calculated in profile.c.  */
+   gcov_type count;
+ 
++  /* Number of cache misses in the given basic block: calculated by auto-profile.c */
++  unsigned long cache_misses;
++
+   /* The index of this block.  */
+   int index;
+ 

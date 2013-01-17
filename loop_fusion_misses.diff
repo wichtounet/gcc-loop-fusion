@@ -1310,6 +1310,8 @@ Index: gcc/tree-loop-fusion.c
 +        long next_misses = 
 +              loop_next->header->cache_misses
 +            + loop_next->latch->cache_misses;
++
++        printf("Misses first:%d second:%d\n", first_misses, next_misses);
 +         
 +        //TODO Test if first_misses ~= next_misses and both are high
 +    }
@@ -1370,7 +1372,7 @@ Index: gcc/tree-loop-fusion.c
 +    {
 +        return 0;
 +    }
-+    
++
 +    //Initialize the stats
 +    memset (&fusion_stats, 0, sizeof (fusion_stats));
 +   
@@ -1488,22 +1490,21 @@ Index: gcc/tree-loop-fusion.c
 +{
 +    {
 +        GIMPLE_PASS, 
-+        "lfusion",                      /* name */
-+        gate_tree_loop_fusion,          /* gate */
-+        tree_loop_fusion,               /* execute */
-+        NULL,                           /* sub */
-+        NULL,                           /* next */
-+        0,                              /* static_pass_number */
-+        TV_TREE_LOOP_FUSION,            /* tv_id */
-+        PROP_cfg | PROP_ssa,            /* properties_required */
-+        0,                              /* properties_provided */
-+        0,                              /* properties_destroyed */
-+        0,                              /* todo_flags_start */
-+        TODO_update_ssa                 /* todo_flags_finish */ 
-+      	| TODO_verify_ssa
-+      	/*| TODO_rebuild_frequencies*/,   
++        "lfusion",                        /* name */
++        gate_tree_loop_fusion,            /* gate */
++        tree_loop_fusion,                 /* execute */
++        NULL,                             /* sub */
++        NULL,                             /* next */
++        0,                                /* static_pass_number */
++        TV_TREE_LOOP_FUSION,              /* tv_id */
++        PROP_cfg | PROP_ssa,              /* properties_required */
++        0,                                /* properties_provided */
++        0,                                /* properties_destroyed */
++        0,                                /* todo_flags_start */
++        TODO_update_ssa | TODO_verify_ssa /* todo_flags_finish */ 
 +    }
 +};
+
 Index: gcc/opts.c
 ===================================================================
 --- gcc/opts.c	(revision 194505)
