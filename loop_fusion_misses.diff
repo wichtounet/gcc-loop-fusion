@@ -1311,9 +1311,19 @@ Index: gcc/tree-loop-fusion.c
 +              loop_next->header->cache_misses
 +            + loop_next->latch->cache_misses;
 +
-+        printf("Misses first:%d second:%d\n", first_misses, next_misses);
-+         
-+        //TODO Test if first_misses ~= next_misses and both are high
++        if (first_misses > 200L && next_misses > 200L)
++        {
++            if (first_misses > next_misses)
++            {
++                return next_misses * 1.2 >= first_misses;
++            }
++            else 
++            {
++                return first_misses * 1.2 >= next_misses;
++            }
++        }
++
++        return false;
 +    }
 +    else 
 +    {
